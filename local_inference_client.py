@@ -154,21 +154,27 @@ def _get_stt_model():
 def _transcribe_to_english(audio_samples: np.ndarray) -> str:
     model = _get_stt_model()
 
+    # Use beam_size=5 for better accuracy, language hint for English
     try:
-        segments, _ = model.transcribe(
+        segments, info = model.transcribe(
             audio_samples,
             task="translate",
-            beam_size=1,
+            language="en",
+            beam_size=5,
             best_of=1,
             temperature=0.0,
             condition_on_previous_text=False,
             vad_filter=True,
+            vad_parameters=dict(
+                min_silence_duration_ms=300,
+                speech_pad_ms=200,
+            ),
         )
     except Exception:
-        segments, _ = model.transcribe(
+        segments, info = model.transcribe(
             audio_samples,
             task="transcribe",
-            beam_size=1,
+            beam_size=5,
             best_of=1,
             temperature=0.0,
             condition_on_previous_text=False,
