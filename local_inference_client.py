@@ -204,9 +204,11 @@ def _get_nllb():
                 model_dir, device="cpu", compute_type="int8",
             )
             # CTranslate2 NLLB models store the sentencepiece model
-            sp_model_path = os.path.join(model_dir, "sentencepiece.model")
-            if not os.path.exists(sp_model_path):
-                sp_model_path = os.path.join(model_dir, "source.spm")
+            # Different repos use different filenames
+            for sp_name in ("sentencepiece.bpe.model", "sentencepiece.model", "source.spm"):
+                sp_model_path = os.path.join(model_dir, sp_name)
+                if os.path.exists(sp_model_path):
+                    break
             _nllb_tokenizer = spm.SentencePieceProcessor()
             _nllb_tokenizer.Load(sp_model_path)
 

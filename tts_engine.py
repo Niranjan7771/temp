@@ -211,10 +211,12 @@ def preload_piper(lang_code: str):
 # ── IndicF5 TTS ────────────────────────────────────────────────────────────
 
 def _get_indicf5_model():
-    """Lazily load IndicF5 model (cached)."""
-    global _indicf5_model, _indicf5_prompts_dir
+    """Lazily load IndicF5 model (cached). Disables itself on first failure."""
+    global _indicf5_model, _indicf5_prompts_dir, _indicf5_available
     if _indicf5_model is not None:
         return _indicf5_model
+    if not _indicf5_available:
+        return None
 
     try:
         model = _IndicF5AutoModel.from_pretrained(
@@ -233,6 +235,7 @@ def _get_indicf5_model():
         return _indicf5_model
     except Exception as e:
         print(f"  [IndicF5 load error] {e}")
+        _indicf5_available = False  # Don't retry on subsequent requests
         return None
 
 
