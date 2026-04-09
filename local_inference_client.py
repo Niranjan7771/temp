@@ -243,7 +243,7 @@ def _nllb_translate(text: str, src_lang: str, tgt_lang: str) -> str:
     translator, tokenizer = _get_nllb()
 
     tokens = tokenizer.Encode(text, out_type=str)
-    source_tokens = [src_lang] + tokens
+    source_tokens = [src_lang] + tokens + ["</s>"]
 
     # Cap output length relative to input to prevent degeneration
     max_len = min(max(len(tokens) * 3, 20), 200)

@@ -331,11 +331,17 @@ def _piper_synthesize(text: str, model_path: Path) -> bytes:
             _piper_cache[key] = PiperVoice.load(str(model_path))
         voice = _piper_cache[key]
 
-        # Synthesize directly to WAV bytes without intermediate buffer
+        # Pre-set WAV format to avoid "channels not specified" on empty synthesis
         wav_io = io.BytesIO()
         with wave.open(wav_io, "wb") as wf:
-            voice.synthesize_wav(text, wf)
-        return wav_io.getvalue()
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(voice.config.sample_rate)
+            voice.synthesize_wav(text, wf, set_wav_format=False)
+        wav_data = wav_io.getvalue()
+        if len(wav_data) <= 44:
+            return b""
+        return wav_data
     except Exception as e:
         print(f"  [Piper TTS error] {e}")
         return b""
