@@ -110,6 +110,12 @@ Replace `3` with your Bluetooth output index.
 python3 main.py --lang hindi --input-device 1 --output-device 3 --threshold 1200 --direct-translate --silence-timeout 0.15 --max-record-secs 2.8 --tts piper --playback-gain 1.5
 ```
 
+If speech is getting cut word-by-word, use sentence mode:
+
+```bash
+python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1200 --direct-translate --silence-timeout 0.30 --min-record-secs 1.1 --max-record-secs 3.5 --trim-threshold 280 --tts piper --playback-gain 1.6
+```
+
 Quick output test before full run:
 
 ```bash
@@ -217,6 +223,8 @@ Unmute and raise volume:
 pactl set-sink-mute @DEFAULT_SINK@ 0
 pactl set-sink-volume @DEFAULT_SINK@ 100%
 ```
+
+Important: run each `pactl` command on its own line. If you paste and see `^[[200~` or mixed commands, press `Ctrl+C` and run again one line at a time.
 
 Quick Linux audio test (outside app):
 

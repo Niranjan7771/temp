@@ -448,8 +448,12 @@ def main():
                         help=f"RMS speech threshold (default: {RMS_THRESHOLD}). Higher = less sensitive. Use --calibrate to find optimal value.")
     parser.add_argument("--silence-timeout", type=float, default=SILENCE_TIMEOUT,
                         help=f"Seconds of silence before processing (default: {SILENCE_TIMEOUT}). Lower = faster end-of-speech.")
+    parser.add_argument("--min-record-secs", type=float, default=0.9,
+                        help="Minimum utterance duration before silence can end capture (default: 0.9).")
     parser.add_argument("--max-record-secs", type=float, default=MAX_RECORD_SECS,
                         help=f"Max utterance length before forced processing (default: {MAX_RECORD_SECS}).")
+    parser.add_argument("--trim-threshold", type=int, default=None,
+                        help="Silence-trim threshold for edges. Lower keeps soft words. Default auto from VAD threshold.")
     parser.add_argument("--tts", choices=["auto", "piper", "espeak", "edge"], default="auto",
                         help="TTS backend: auto (best available), piper, espeak (fastest), edge (cloud)")
     parser.add_argument("--direct-translate", action="store_true",
@@ -470,7 +474,10 @@ def main():
     tgt_code = LANG_MAP[args.lang]
     threshold = args.threshold
     silence_timeout = args.silence_timeout
+    min_record_secs = max(0.2, args.min_record_secs)
     max_record_secs = args.max_record_secs
+    trim_threshold = args.trim_threshold if args.trim_threshold is not None else max(150, min(450, threshold // 4))
+    trim_threshold = max(50, trim_threshold)
     direct_translate = args.direct_translate
 
     # Store playback controls globally for background playback thread.
@@ -524,7 +531,9 @@ def main():
     print(f"  TTS backend     : {tts_display}")
     print(f"  Mic threshold   : {threshold}")
     print(f"  Silence timeout : {silence_timeout}")
+    print(f"  Min record secs : {min_record_secs}")
     print(f"  Max record secs : {max_record_secs}")
+    print(f"  Trim threshold  : {trim_threshold}")
     print(f"  Direct translate: {'on' if direct_translate else 'off'}")
     print(f"  Sample rate     : {SAMPLE_RATE} Hz")
     print(f"  Playback gain   : {_playback_gain:.2f}x")
@@ -589,6 +598,7 @@ def main():
     buf = bytearray()
     speech_active = False
     silence_start = None
+    speech_started_at = None
     last_reset = time.time()
     utterance_count = 0
     last_rms = 0.0  # Cache RMS to avoid redundant calculations
@@ -621,7 +631,10 @@ def main():
                 if last_rms > threshold:
                     if not speech_active:
                         speech_active = True
+                        speech_started_at = now
                         print("🎙️  Voice detected…", flush=True)
+                    if speech_started_at is None:
+                        speech_started_at = now
                     silence_start = None
                 else:
                     if speech_active and silence_start is None:
@@ -631,10 +644,16 @@ def main():
                         buf = bytearray(buf[-8000:])  # keep only last 0.25s
 
                 # ── Trigger processing ─────────────────────────────────
-                should_trigger = (
-                    (speech_active and silence_start and now - silence_start > silence_timeout)
-                    or (now - last_reset > max_record_secs and len(buf) > 32000)
+                speech_dur = (now - speech_started_at) if speech_started_at else 0.0
+                silence_dur = (now - silence_start) if silence_start else 0.0
+                silence_cut = (
+                    speech_active
+                    and silence_start is not None
+                    and silence_dur > silence_timeout
+                    and speech_dur >= min_record_secs
                 )
+                max_len_cut = speech_active and speech_dur >= max_record_secs
+                should_trigger = silence_cut or max_len_cut
 
                 if should_trigger:
                     overall_rms = calculate_rms(bytes(buf))
@@ -643,16 +662,18 @@ def main():
                         buf = bytearray()
                         speech_active = False
                         silence_start = None
+                        speech_started_at = None
                         last_reset = now
                         continue
 
                     # Trim silence and process
                     raw_pcm = bytes(buf)
-                    trimmed = trim_silence(raw_pcm, threshold=threshold)
+                    trimmed = trim_silence(raw_pcm, threshold=trim_threshold)
                     wav_bytes = build_wav(trimmed)
                     buf = bytearray()
                     speech_active = False
                     silence_start = None
+                    speech_started_at = None
                     last_reset = now
                     utterance_count += 1
 

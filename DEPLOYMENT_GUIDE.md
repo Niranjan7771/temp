@@ -118,11 +118,21 @@ python3 main.py --lang hindi --input-device 1
 
 ### Adjust speech detection sensitivity:
 ```bash
-python3 main.py --lang hindi --threshold 200
+python3 main.py --lang hindi --threshold 800
 ```
 
 Lower threshold = more sensitive (picks up quieter speech).  
 Higher threshold = less sensitive (needs louder speech).
+
+### Full sentence capture profile (recommended with Bluetooth buds):
+```bash
+python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1200 --direct-translate --silence-timeout 0.30 --min-record-secs 1.1 --max-record-secs 3.5 --trim-threshold 280 --tts piper --playback-gain 1.6
+```
+
+Use this when speech gets split word-by-word. The flags work as follows:
+- `--silence-timeout`: wait longer before ending an utterance
+- `--min-record-secs`: prevent very short clips from triggering too early
+- `--trim-threshold`: keep softer word edges during silence trimming
 
 ---
 
@@ -231,3 +241,7 @@ pip install -r requirements.txt --break-system-packages
 | **Total (to audio)**   | **~1.3–2.5s**     |
 
 WiFi latency from Pi (~73-314ms per ping) adds to the cloud API round-trip times.
+
+
+Bluetooth device D6:93:57:C7:35:F9 is connected.
+
