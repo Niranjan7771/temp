@@ -181,7 +181,25 @@ def _transcribe_to_english(audio_samples: np.ndarray) -> str:
         if piece:
             text_parts.append(piece)
 
-    return " ".join(text_parts).strip()
+    result = " ".join(text_parts).strip()
+
+    # Filter Whisper hallucinations on noise/silence
+    if result:
+        words = result.split()
+        # Detect single-word repetition (e.g. "Allah Allah Allah...")
+        if len(words) >= 4:
+            unique = set(w.lower().strip(".,!?") for w in words)
+            if len(unique) <= 2:
+                return ""
+        # Detect common Whisper noise hallucinations
+        _HALLUCINATIONS = {
+            "thank you", "thanks for watching", "bye",
+            "you", "the end", "subscribe",
+        }
+        if result.lower().strip(".,!? ") in _HALLUCINATIONS:
+            return ""
+
+    return result
 
 
 # ── Translation (NLLB-200 via CTranslate2) ────────────────────────────────
@@ -227,11 +245,16 @@ def _nllb_translate(text: str, src_lang: str, tgt_lang: str) -> str:
     tokens = tokenizer.Encode(text, out_type=str)
     source_tokens = [src_lang] + tokens
 
+    # Cap output length relative to input to prevent degeneration
+    max_len = min(max(len(tokens) * 3, 20), 200)
+
     results = translator.translate_batch(
         [source_tokens],
         target_prefix=[[tgt_lang]],
         beam_size=4,
-        max_decoding_length=256,
+        max_decoding_length=max_len,
+        repetition_penalty=1.2,
+        no_repeat_ngram_size=3,
     )
 
     output_tokens = results[0].hypotheses[0]
