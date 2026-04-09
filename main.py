@@ -60,6 +60,10 @@ _tts_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_pre
 # Actual mic sample rate (may differ from SAMPLE_RATE if mic doesn't support 16kHz)
 _mic_rate: int = SAMPLE_RATE
 
+# Optional playback device and gain controls
+_output_device: int | None = None
+_playback_gain: float = 1.0
+
 
 def _resample_int16(pcm_bytes: bytes, from_rate: int, to_rate: int) -> bytes:
     """Resample int16 PCM bytes from from_rate to to_rate."""
@@ -158,8 +162,12 @@ def play_wav(wav_bytes: bytes):
         if ch > 1:
             audio = audio.reshape(-1, ch)[:, 0]  # take first channel
 
+        # Optional gain boost for quiet Bluetooth paths; clip to valid float32 range.
+        if _playback_gain != 1.0:
+            audio = np.clip(audio * _playback_gain, -1.0, 1.0)
+
         _paused.set()  # pause mic during playback
-        sd.play(audio, samplerate=sr, blocking=True)
+        sd.play(audio, samplerate=sr, blocking=True, device=_output_device)
         sd.wait()
     except Exception as e:
         print(f"  [Play error] {e}")
@@ -194,7 +202,9 @@ def play_stream(audio_generator):
 
         if all_audio and play_sr:
             combined = np.concatenate(all_audio)
-            sd.play(combined, samplerate=play_sr, blocking=True)
+            if _playback_gain != 1.0:
+                combined = np.clip(combined * _playback_gain, -1.0, 1.0)
+            sd.play(combined, samplerate=play_sr, blocking=True, device=_output_device)
             sd.wait()
     except Exception as e:
         print(f"  [Play stream error] {e}")
@@ -329,6 +339,20 @@ def _calibrate_noise(input_device=None):
     print("=" * 56)
 
 
+def _play_test_tone(output_device=None, gain: float = 1.0):
+    """Play a short 1 kHz tone to verify speaker routing/volume."""
+    sr = 24000
+    duration = 1.0
+    t = np.linspace(0, duration, int(sr * duration), endpoint=False, dtype=np.float32)
+    tone = 0.2 * np.sin(2 * np.pi * 1000 * t)
+    if gain != 1.0:
+        tone = np.clip(tone * gain, -1.0, 1.0)
+    print("  Playing 1 kHz test tone...")
+    sd.play(tone, samplerate=sr, blocking=True, device=output_device)
+    sd.wait()
+    print("  Done.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Wearable Voice Translator v2")
     parser.add_argument(
@@ -338,6 +362,12 @@ def main():
     )
     parser.add_argument("--list-devices", action="store_true", help="List audio devices and exit")
     parser.add_argument("--input-device", type=int, default=None, help="Mic device index")
+    parser.add_argument("--output-device", type=int, default=None,
+                        help="Speaker output device index (use for Bluetooth buds)")
+    parser.add_argument("--test-audio", action="store_true",
+                        help="Play a short test tone on output device and exit")
+    parser.add_argument("--playback-gain", type=float, default=1.0,
+                        help="Playback gain multiplier (e.g. 1.5 for quieter buds)")
     parser.add_argument("--threshold", type=int, default=RMS_THRESHOLD,
                         help=f"RMS speech threshold (default: {RMS_THRESHOLD}). Higher = less sensitive. Use --calibrate to find optimal value.")
     parser.add_argument("--silence-timeout", type=float, default=SILENCE_TIMEOUT,
@@ -367,6 +397,37 @@ def main():
     max_record_secs = args.max_record_secs
     direct_translate = args.direct_translate
 
+    # Store playback controls globally for background playback thread.
+    global _output_device, _playback_gain
+    _output_device = args.output_device
+    _playback_gain = max(0.1, args.playback_gain)
+
+    # Set process-level defaults without passing None values.
+    if args.input_device is not None and args.output_device is not None:
+        sd.default.device = (args.input_device, args.output_device)
+    elif args.input_device is not None:
+        sd.default.device = args.input_device
+    elif args.output_device is not None:
+        sd.default.device = (sd.default.device[0], args.output_device)
+
+    if args.output_device is not None:
+        try:
+            out_info = sd.query_devices(args.output_device, 'output')
+            print(f"  Output device   : {args.output_device} ({out_info['name']})")
+        except Exception as e:
+            print(f"ERROR: Could not use output device {args.output_device}: {e}")
+            print("Run with --list-devices and pick a device with output channels.")
+            sys.exit(1)
+
+    if args.test_audio:
+        try:
+            _play_test_tone(output_device=args.output_device, gain=_playback_gain)
+        except Exception as e:
+            print(f"ERROR: Test tone failed: {e}")
+            print("Run with --list-devices and verify your Bluetooth sink is connected.")
+            sys.exit(1)
+        return
+
     print("=" * 56)
     print("  Wearable Voice Translator v2")
     print("=" * 56)
@@ -381,6 +442,7 @@ def main():
     print(f"  Max record secs : {max_record_secs}")
     print(f"  Direct translate: {'on' if direct_translate else 'off'}")
     print(f"  Sample rate     : {SAMPLE_RATE} Hz")
+    print(f"  Playback gain   : {_playback_gain:.2f}x")
     print()
     print("  TTS backends available:")
     print_status()
