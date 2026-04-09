@@ -126,13 +126,15 @@ Higher threshold = less sensitive (needs louder speech).
 
 ### Full sentence capture profile (recommended with Bluetooth buds):
 ```bash
-python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1000 --silence-timeout 0.35 --min-record-secs 1.2 --max-record-secs 4.0 --trim-threshold 220 --tts piper --playback-gain 1.6
+python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1000 --silence-timeout 0.35 --min-record-secs 1.2 --max-record-secs 4.0 --trim-threshold 220 --post-playback-deaf-secs 0.45 --tts piper --playback-gain 1.6
 ```
 
 Use this when speech gets split word-by-word. The flags work as follows:
 - `--silence-timeout`: wait longer before ending an utterance
 - `--min-record-secs`: prevent very short clips from triggering too early
 - `--trim-threshold`: keep softer word edges during silence trimming
+- `--post-playback-deaf-secs`: ignore mic briefly after TTS playback to avoid echo capture
+- suspicious one-word replies on long audio are filtered by default (use `--allow-short-replies` to disable)
 
 Latency vs accuracy:
 - Add `--direct-translate` for lowest latency.

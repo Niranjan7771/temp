@@ -113,13 +113,14 @@ python3 main.py --lang hindi --input-device 1 --output-device 3 --threshold 1200
 If speech is getting cut word-by-word, use sentence mode:
 
 ```bash
-python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1000 --silence-timeout 0.35 --min-record-secs 1.2 --max-record-secs 4.0 --trim-threshold 220 --tts piper --playback-gain 1.6
+python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1000 --silence-timeout 0.35 --min-record-secs 1.2 --max-record-secs 4.0 --trim-threshold 220 --post-playback-deaf-secs 0.45 --tts piper --playback-gain 1.6
 ```
 
 For lowest latency, add `--direct-translate`.
 For best accuracy, keep it off (default).
 
 Note: direct mode now auto-retries with 2-step STT+Translate when a long utterance returns suspiciously short text.
+By default, suspicious one-word replies for long audio are filtered. If you truly want one-word replies, add `--allow-short-replies`.
 
 Quick output test before full run:
 
@@ -174,7 +175,7 @@ python3 main.py --lang hindi --input-device 1 --output-device 3 --direct-transla
 Run in accuracy-first mode (no direct translate):
 
 ```bash
-python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1000 --silence-timeout 0.35 --min-record-secs 1.2 --max-record-secs 4.0 --trim-threshold 220 --tts piper --playback-gain 1.6
+python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1000 --silence-timeout 0.35 --min-record-secs 1.2 --max-record-secs 4.0 --trim-threshold 220 --post-playback-deaf-secs 0.45 --tts piper --playback-gain 1.6
 ```
 
 ### If Bluetooth buds have no sound

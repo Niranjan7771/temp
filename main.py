@@ -65,6 +65,9 @@ _mic_rate: int = SAMPLE_RATE
 # Optional playback device and gain controls
 _output_device: int | None = None
 _playback_gain: float = 1.0
+_post_playback_deaf_secs: float = 0.35
+_capture_block_until: float = 0.0
+_allow_short_replies: bool = False
 
 
 def _resample_int16(pcm_bytes: bytes, from_rate: int, to_rate: int) -> bytes:
@@ -82,7 +85,7 @@ def _resample_int16(pcm_bytes: bytes, from_rate: int, to_rate: int) -> bytes:
 
 def mic_callback(indata, frames, time_info, status):
     """Called by sounddevice for each mic block. Puts raw PCM into queue."""
-    if _paused.is_set():
+    if _paused.is_set() or time.time() < _capture_block_until:
         return
     # indata is float32 [-1, 1] → convert to int16
     pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
@@ -137,6 +140,39 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"\w+", text))
 
 
+_LOW_INFO_SHORTS = {
+    "yes", "no", "ok", "okay", "and", "hmm", "uh", "um", "huh",
+}
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for low-confidence heuristics."""
+    if not text:
+        return ""
+    normalized = re.sub(r"[^a-z0-9\s]", " ", text.lower())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _is_suspicious_short_transcript(text: str, audio_secs: float) -> bool:
+    """Heuristic: long enough audio but transcript is overly short/generic."""
+    if audio_secs < 1.0:
+        return False
+    cleaned = _normalize_text(text)
+    wc = _word_count(cleaned)
+    if cleaned in _LOW_INFO_SHORTS and wc <= 2:
+        return True
+    return audio_secs >= 1.4 and wc <= 1
+
+
+def _transcript_score(text: str, audio_secs: float) -> int:
+    """Simple score to compare two transcript candidates."""
+    cleaned = _normalize_text(text)
+    score = _word_count(cleaned)
+    if _is_suspicious_short_transcript(cleaned, audio_secs):
+        score -= 2
+    return score
+
+
 def build_wav(raw_pcm: bytes) -> bytes:
     """Wrap raw int16 mono PCM in a WAV header."""
     buf = io.BytesIO()
@@ -182,6 +218,8 @@ def play_wav(wav_bytes: bytes):
     except Exception as e:
         print(f"  [Play error] {e}")
     finally:
+        global _capture_block_until
+        _capture_block_until = max(_capture_block_until, time.time() + _post_playback_deaf_secs)
         _paused.clear()
         # Drain any frames captured during playback
         while not _audio_q.empty():
@@ -219,6 +257,8 @@ def play_stream(audio_generator):
     except Exception as e:
         print(f"  [Play stream error] {e}")
     finally:
+        global _capture_block_until
+        _capture_block_until = max(_capture_block_until, time.time() + _post_playback_deaf_secs)
         _paused.clear()
         while not _audio_q.empty():
             try:
@@ -278,26 +318,36 @@ def process_utterance(wav_bytes: bytes, tgt_code: str, tgt_name: str, direct_tra
         text, t_stt, t_translate = result
         english_text = None
 
-    # In low-latency direct mode, retry with two-step STT+Translate when the
-    # output is suspiciously short for a longer utterance.
-    if direct_translate and tgt_code != "en-IN":
-        wc = _word_count(text)
-        suspicious_short = audio_secs >= 1.4 and wc <= 2
-        if suspicious_short:
+    suspicious_short = _is_suspicious_short_transcript(text, audio_secs)
+    if suspicious_short and tgt_code != "en-IN":
+        if direct_translate:
             print("  [Accuracy] Retrying with 2-step STT+Translate…")
             retry = transcribe_and_translate(wav_bytes, tgt_lang=tgt_code, direct_translate=False)
-            if len(retry) == 4:
-                text2, english_text2, t_stt2, t_translate2 = retry
-            else:
-                text2, t_stt2, t_translate2 = retry
-                english_text2 = None
+        else:
+            print("  [Accuracy] Retrying with direct STT+Translate…")
+            retry = transcribe_and_translate(
+                wav_bytes,
+                tgt_lang=tgt_code,
+                direct_translate=True,
+                fallback_to_two_step=False,
+            )
 
-            # Prefer retry result when it has more content.
-            if _word_count(text2) > _word_count(text):
-                text = text2
-                english_text = english_text2
-            t_stt += t_stt2
-            t_translate += t_translate2
+        if len(retry) == 4:
+            text2, english_text2, t_stt2, t_translate2 = retry
+        else:
+            text2, t_stt2, t_translate2 = retry
+            english_text2 = None
+
+        # Prefer retry result when it has more content.
+        if _transcript_score(text2, audio_secs) > _transcript_score(text, audio_secs):
+            text = text2
+            english_text = english_text2
+        t_stt += t_stt2
+        t_translate += t_translate2
+
+    if (not _allow_short_replies) and _is_suspicious_short_transcript(text, audio_secs):
+        print(f"  (low-confidence short transcript skipped — stt: {t_stt:.2f}s)")
+        return
 
     if not text or text.strip().lower() in FILLER_PHRASES or len(text.strip()) <= 1:
         print(f"  (filtered noise \u2014 stt: {t_stt:.2f}s)")
@@ -474,6 +524,10 @@ def main():
                         help="Play a short test tone on output device and exit")
     parser.add_argument("--playback-gain", type=float, default=1.0,
                         help="Playback gain multiplier (e.g. 1.5 for quieter buds)")
+    parser.add_argument("--post-playback-deaf-secs", type=float, default=0.35,
+                        help="Ignore mic briefly after playback to prevent echo re-capture.")
+    parser.add_argument("--allow-short-replies", action="store_true",
+                        help="Allow short one-word transcripts (yes/no/okay) even for long audio.")
     parser.add_argument("--threshold", type=int, default=RMS_THRESHOLD,
                         help=f"RMS speech threshold (default: {RMS_THRESHOLD}). Higher = less sensitive. Use --calibrate to find optimal value.")
     parser.add_argument("--silence-timeout", type=float, default=SILENCE_TIMEOUT,
@@ -511,9 +565,11 @@ def main():
     direct_translate = args.direct_translate
 
     # Store playback controls globally for background playback thread.
-    global _output_device, _playback_gain
+    global _output_device, _playback_gain, _post_playback_deaf_secs, _allow_short_replies
     _output_device = args.output_device
     _playback_gain = max(0.1, args.playback_gain)
+    _post_playback_deaf_secs = max(0.0, args.post_playback_deaf_secs)
+    _allow_short_replies = args.allow_short_replies
 
     # Set process-level defaults without passing None values.
     if args.input_device is not None and args.output_device is not None:
@@ -567,6 +623,8 @@ def main():
     print(f"  Direct translate: {'on' if direct_translate else 'off'}")
     print(f"  Sample rate     : {SAMPLE_RATE} Hz")
     print(f"  Playback gain   : {_playback_gain:.2f}x")
+    print(f"  Echo cooldown   : {_post_playback_deaf_secs:.2f}s")
+    print(f"  Short replies   : {'allowed' if _allow_short_replies else 'filtered'}")
     print()
     print("  TTS backends available:")
     print_status()
