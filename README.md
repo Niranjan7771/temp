@@ -7,7 +7,7 @@ Core mode is headless audio-in -> audio-out, with an optional web prototype UI.
 
 ```
 Earbud Mic → sounddevice capture → VAD (RMS-based)
-    → Sarvam STT + Translate  [cloud, ~1-1.5s]
+  → STT + Translate (Sarvam cloud or local models)
     → Piper TTS               [LOCAL, ~0.2-0.4s]
     → sounddevice playback → Earbud Speaker
 ```
@@ -70,6 +70,40 @@ The web prototype supports:
 - TTS audio synthesis and browser playback
 - Per-call latency metrics (STT / translate / TTS / total)
 
+## Local-Only Inference Mode (No Sarvam)
+
+If you want to remove network latency from STT + translation, use the local backend.
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Download one-time local assets (Whisper + Argos packages):
+
+```bash
+python download_local_models.py
+```
+
+Run headless app with local backend:
+
+```bash
+python main.py --inference-backend local --lang hindi --tts piper
+```
+
+Run web prototype with local backend:
+
+```bash
+python serve_demo.py --port 8080 --inference-backend local
+```
+
+Notes for local mode:
+
+- Browser voice uploads in web mode may require `ffmpeg` for non-WAV formats.
+- No `SARVAM_API_KEY` is required when backend is `local`.
+- For low latency, keep utterances short and use `tiny` local STT model (`LOCAL_STT_MODEL=tiny`).
+
 ## Quick Start (Raspberry Pi — Production)
 
 ```bash
@@ -113,8 +147,11 @@ wearable-v2/
 ├── main.py              # Entry point — mic capture, VAD, orchestration
 ├── config.py            # All settings (languages, thresholds, model paths)
 ├── sarvam_client.py     # Sarvam API: STT + Translation (cloud, no TTS)
+├── local_inference_client.py  # Offline STT + translation (Whisper + Argos)
+├── inference_client.py   # Backend router (sarvam/local)
 ├── tts_engine.py        # Local TTS: Piper → espeak-ng → edge-tts fallback
 ├── download_models.py   # One-time Piper model downloader
+├── download_local_models.py  # One-time local STT/translation asset downloader
 ├── requirements.txt     # pip dependencies
 ├── piper_models/        # (created by download_models.py)
 │   ├── en_US-lessac-medium.onnx
@@ -136,6 +173,6 @@ wearable-v2/
 ## Notes
 
 - The `.env` file with `SARVAM_API_KEY` is shared with the v1 folder (auto-detected).
-- Internet is still required for STT + Translation (Sarvam cloud).
+- Internet is required only for Sarvam backend and one-time local model downloads.
 - On Pi, connect Bluetooth earbuds via `bluetoothctl` — they appear as a regular audio device.
 - Piper models are ~60-100MB each. Download once, use forever.

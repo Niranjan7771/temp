@@ -23,8 +23,15 @@ from flask import Flask, jsonify, request, send_from_directory
 import numpy as np
 import sounddevice as sd
 
-from config import LANG_MAP, SARVAM_API_KEY
-from sarvam_client import transcribe_and_translate, translate_text
+from config import LANG_MAP, INFERENCE_BACKEND
+from inference_client import (
+    set_backend,
+    get_backend,
+    backend_ready,
+    backend_status,
+    transcribe_and_translate,
+    translate_text,
+)
 from tts_engine import get_backend_name, synthesize
 
 
@@ -145,10 +152,15 @@ def _build_app() -> Flask:
     @app.get("/api/health")
     def health():
         target_code = LANG_MAP["hindi"]
+        ready, status = backend_ready()
+        backend = get_backend()
         return jsonify(
             {
                 "status": "ok",
-                "apiKeyConfigured": bool(SARVAM_API_KEY),
+                "apiKeyConfigured": ready if backend == "sarvam" else True,
+                "inferenceBackend": backend,
+                "inferenceReady": ready,
+                "inferenceStatus": status,
                 "defaultLanguage": "hindi",
                 "languages": [
                     {
@@ -175,16 +187,20 @@ def _build_app() -> Flask:
         tts_backend = (payload.get("ttsBackend") or "auto").strip().lower() or "auto"
         include_audio = bool(payload.get("includeAudio", True))
 
-        if not SARVAM_API_KEY:
-            return jsonify({"error": "SARVAM_API_KEY is not configured"}), 503
+        ready, status = backend_ready()
+        if not ready:
+            return jsonify({"error": status, "inferenceBackend": get_backend()}), 503
 
         t_total_start = time.time()
-        translated, t_translate = translate_text(
-            text,
-            source_lang=source_code,
-            target_lang=target_code,
-            fallback_to_source=True,
-        )
+        try:
+            translated, t_translate = translate_text(
+                text,
+                source_lang=source_code,
+                target_lang=target_code,
+                fallback_to_source=True,
+            )
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
 
         t_tts = 0.0
         audio_b64 = ""
@@ -224,8 +240,9 @@ def _build_app() -> Flask:
         if "audio" not in request.files:
             return jsonify({"error": "audio file is required"}), 400
 
-        if not SARVAM_API_KEY:
-            return jsonify({"error": "SARVAM_API_KEY is not configured"}), 503
+        ready, status = backend_ready()
+        if not ready:
+            return jsonify({"error": status, "inferenceBackend": get_backend()}), 503
 
         target_key, target_code = _normalize_lang(request.form.get("targetLang"), fallback="hindi")
         direct_translate = str(request.form.get("directTranslate", "true")).strip().lower() in {
@@ -242,13 +259,16 @@ def _build_app() -> Flask:
             return jsonify({"error": "empty audio payload"}), 400
 
         t_total_start = time.time()
-        result = transcribe_and_translate(
-            wav_bytes,
-            tgt_lang=target_code,
-            direct_translate=direct_translate,
-            audio_filename=audio_file.filename or "audio.wav",
-            audio_content_type=audio_file.mimetype or "audio/wav",
-        )
+        try:
+            result = transcribe_and_translate(
+                wav_bytes,
+                tgt_lang=target_code,
+                direct_translate=direct_translate,
+                audio_filename=audio_file.filename or "audio.wav",
+                audio_content_type=audio_file.mimetype or "audio/wav",
+            )
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 500
 
         if len(result) == 4:
             translated_text, english_text, t_stt, t_translate = result
@@ -304,14 +324,18 @@ def _build_app() -> Flask:
         playback_gain = max(0.1, min(4.0, playback_gain))
 
         if source_code != target_code:
-            if not SARVAM_API_KEY:
-                return jsonify({"error": "SARVAM_API_KEY is not configured"}), 503
-            translated, t_translate = translate_text(
-                text,
-                source_lang=source_code,
-                target_lang=target_code,
-                fallback_to_source=False,
-            )
+            ready, status = backend_ready()
+            if not ready:
+                return jsonify({"error": status, "inferenceBackend": get_backend()}), 503
+            try:
+                translated, t_translate = translate_text(
+                    text,
+                    source_lang=source_code,
+                    target_lang=target_code,
+                    fallback_to_source=False,
+                )
+            except Exception as exc:
+                return jsonify({"error": str(exc)}), 500
             if not translated:
                 return jsonify({"error": "translation failed"}), 422
         else:
@@ -359,7 +383,12 @@ def main():
     parser = argparse.ArgumentParser(description="Serve the web prototype over the network")
     parser.add_argument("--port", type=int, default=8080, help="Port to serve on (default: 8080)")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
+    parser.add_argument("--inference-backend", choices=["sarvam", "local"],
+                        default=INFERENCE_BACKEND,
+                        help=f"Inference backend (default: {INFERENCE_BACKEND})")
     args = parser.parse_args()
+
+    set_backend(args.inference_backend)
 
     if not STATIC_DIR.exists():
         print(f"ERROR: Directory not found: {STATIC_DIR}")
@@ -376,7 +405,10 @@ def main():
     print(f"Serving static files: {STATIC_DIR}")
     print(f"Bind host:            {args.host}")
     print(f"Port:                 {args.port}")
-    print(f"API key configured:   {'yes' if SARVAM_API_KEY else 'no'}")
+    ready, status = backend_ready()
+    print(f"Inference backend:    {get_backend()}")
+    print(f"Inference ready:      {'yes' if ready else 'no'}")
+    print(f"Inference status:     {status}")
     print()
     print(f"Open on this device:  http://localhost:{args.port}")
 

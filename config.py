@@ -14,6 +14,19 @@ if _env_path.exists():
 else:
     load_dotenv()
 
+# ── Inference backend selection 
+# sarvam: cloud STT + translation
+# local:  on-device STT + translation
+INFERENCE_BACKEND = os.getenv("INFERENCE_BACKEND", "sarvam").strip().lower()
+if INFERENCE_BACKEND not in {"sarvam", "local"}:
+    INFERENCE_BACKEND = "sarvam"
+
+# Local STT configuration (used when INFERENCE_BACKEND=local)
+# Common model values: tiny, base, small
+LOCAL_STT_MODEL = os.getenv("LOCAL_STT_MODEL", "tiny")
+LOCAL_STT_DEVICE = os.getenv("LOCAL_STT_DEVICE", "cpu")
+LOCAL_STT_COMPUTE_TYPE = os.getenv("LOCAL_STT_COMPUTE_TYPE", "int8")
+
 # ── Sarvam API ──────────────────────────────────────────────────────────────
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 SARVAM_BASE_URL = "https://api.sarvam.ai"

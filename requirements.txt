@@ -14,3 +14,9 @@ edge-tts>=6.1
 
 # MP3 decoding (edge-tts returns MP3, we need WAV for playback)
 miniaudio>=1.50
+
+# Local STT (offline)
+faster-whisper>=1.1
+
+# Local translation (offline)
+argostranslate>=1.9

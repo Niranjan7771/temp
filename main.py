@@ -2,7 +2,7 @@
 Wearable Voice Translator v2 — Headless Audio Pipeline
 
 No browser, no Streamlit. Pure terminal app designed for Raspberry Pi.
-Captures mic audio, translates via Sarvam cloud, speaks via local Piper TTS.
+Captures mic audio, translates via selected inference backend, speaks via local TTS.
 
 Usage:
     python main.py                   # defaults to Hindi output
@@ -41,12 +41,19 @@ if sys.platform == "linux":
 import sounddevice as sd
 
 from config import (
-    LANG_MAP, DEFAULT_TARGET_LANG,
+    LANG_MAP, DEFAULT_TARGET_LANG, INFERENCE_BACKEND,
     SAMPLE_RATE, CHANNELS, BLOCK_SIZE,
     RMS_THRESHOLD, SILENCE_TIMEOUT, MAX_RECORD_SECS, MIN_SPEECH_RMS,
     FILLER_PHRASES, MAX_WAV_KB,
 )
-from sarvam_client import transcribe_and_translate, translate_text
+from inference_client import (
+    set_backend,
+    get_backend,
+    backend_ready,
+    backend_status,
+    transcribe_and_translate,
+    translate_text,
+)
 from tts_engine import synthesize, synthesize_stream, print_status, get_backend_name, preload_piper
 
 
@@ -309,6 +316,7 @@ def _speak_background(text: str, tgt_code: str, t0: float, t_stt: float, t_trans
 def process_utterance(wav_bytes: bytes, tgt_code: str, tgt_name: str, direct_translate: bool):
     """Run the full pipeline: STT → Translate → TTS → Play."""
     t0 = time.time()
+    active_backend = get_backend()
 
     # Audio info
     wav_kb = len(wav_bytes) / 1024
@@ -325,8 +333,12 @@ def process_utterance(wav_bytes: bytes, tgt_code: str, tgt_name: str, direct_tra
         print(f"  (too large: {wav_kb:.0f} KB > {MAX_WAV_KB} KB limit — skipping)")
         return
 
-    # ── STT + Translation (cloud) ──────────────────────────────────────
-    result = transcribe_and_translate(wav_bytes, tgt_lang=tgt_code, direct_translate=direct_translate)
+    # ── STT + Translation ──────────────────────────────────────────────
+    try:
+        result = transcribe_and_translate(wav_bytes, tgt_lang=tgt_code, direct_translate=direct_translate)
+    except Exception as e:
+        print(f"  [Inference error] {e}")
+        return
     
     # Handle both 3-tuple and 4-tuple returns for compatibility
     if len(result) == 4:
@@ -336,18 +348,26 @@ def process_utterance(wav_bytes: bytes, tgt_code: str, tgt_name: str, direct_tra
         english_text = None
 
     suspicious_short = _is_suspicious_short_transcript(text, audio_secs)
-    if suspicious_short and tgt_code != "en-IN":
+    if suspicious_short and tgt_code != "en-IN" and active_backend == "sarvam":
         if direct_translate:
             print("  [Accuracy] Retrying with 2-step STT+Translate…")
-            retry = transcribe_and_translate(wav_bytes, tgt_lang=tgt_code, direct_translate=False)
+            try:
+                retry = transcribe_and_translate(wav_bytes, tgt_lang=tgt_code, direct_translate=False)
+            except Exception as e:
+                print(f"  [Inference retry error] {e}")
+                retry = ("", "", 0.0, 0.0)
         else:
             print("  [Accuracy] Retrying with direct STT+Translate…")
-            retry = transcribe_and_translate(
-                wav_bytes,
-                tgt_lang=tgt_code,
-                direct_translate=True,
-                fallback_to_two_step=False,
-            )
+            try:
+                retry = transcribe_and_translate(
+                    wav_bytes,
+                    tgt_lang=tgt_code,
+                    direct_translate=True,
+                    fallback_to_two_step=False,
+                )
+            except Exception as e:
+                print(f"  [Inference retry error] {e}")
+                retry = ("", "", 0.0, 0.0)
 
         if len(retry) == 4:
             text2, english_text2, t_stt2, t_translate2 = retry
@@ -371,12 +391,16 @@ def process_utterance(wav_bytes: bytes, tgt_code: str, tgt_name: str, direct_tra
         normalized = _normalize_text(text)
         if normalized:
             print("  [Translate] Retrying translation for non-English output…")
-            translated, t_tr = translate_text(
-                text,
-                source_lang="en-IN",
-                target_lang=tgt_code,
-                fallback_to_source=False,
-            )
+            try:
+                translated, t_tr = translate_text(
+                    text,
+                    source_lang="en-IN",
+                    target_lang=tgt_code,
+                    fallback_to_source=False,
+                )
+            except Exception as e:
+                print(f"  [Translate retry error] {e}")
+                translated, t_tr = "", 0.0
             if translated:
                 if english_text is None:
                     english_text = text
@@ -576,6 +600,9 @@ def main():
                         help="TTS backend: auto (best available), piper, espeak (fastest), edge (cloud)")
     parser.add_argument("--direct-translate", action="store_true",
                         help="Use a single STT+Translate call (lower latency, skips English preview).")
+    parser.add_argument("--inference-backend", choices=["sarvam", "local"],
+                        default=INFERENCE_BACKEND,
+                        help=f"Inference backend (default: {INFERENCE_BACKEND})")
     parser.add_argument("--calibrate", action="store_true",
                         help="Measure ambient noise for 3 seconds and recommend a threshold")
     args = parser.parse_args()
@@ -587,6 +614,14 @@ def main():
     if args.calibrate:
         _calibrate_noise(args.input_device)
         return
+
+    set_backend(args.inference_backend)
+    ready, status_msg = backend_ready()
+    if not ready:
+        print(f"ERROR: {status_msg}")
+        if get_backend() == "local":
+            print("Hint: run `python download_local_models.py` after installing dependencies.")
+        sys.exit(1)
 
     tgt_name = args.lang.capitalize()
     tgt_code = LANG_MAP[args.lang]
@@ -643,6 +678,7 @@ def main():
     print("=" * 56)
     print("  Wearable Voice Translator v2")
     print("=" * 56)
+    print(f"  Inference       : {get_backend()} ({backend_status()})")
     print(f"  Output language : {tgt_name} ({tgt_code})")
     # Store TTS backend preference globally
     global _tts_backend
@@ -654,7 +690,10 @@ def main():
     print(f"  Min record secs : {min_record_secs}")
     print(f"  Max record secs : {max_record_secs}")
     print(f"  Trim threshold  : {trim_threshold}")
-    print(f"  Direct translate: {'on' if direct_translate else 'off'}")
+    if get_backend() == "sarvam":
+        print(f"  Direct translate: {'on' if direct_translate else 'off'}")
+    else:
+        print("  Direct translate: n/a (local backend)")
     print(f"  Sample rate     : {SAMPLE_RATE} Hz")
     print(f"  Playback gain   : {_playback_gain:.2f}x")
     print(f"  Echo cooldown   : {_post_playback_deaf_secs:.2f}s")
