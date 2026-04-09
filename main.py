@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import io
+import re
 import subprocess
 import sys
 import time
@@ -123,9 +124,17 @@ def trim_silence(raw_pcm: bytes, threshold: int = 150, frame_size: int = 480) ->
     if len(loud_frames) == 0:
         return raw_pcm
     
-    start = max(0, loud_frames[0] - 3)
-    end = min(n_frames, loud_frames[-1] + 4)
+    # Keep extra context around edges so soft initial/final syllables are preserved.
+    start = max(0, loud_frames[0] - 6)
+    end = min(n_frames, loud_frames[-1] + 7)
     return samples[start*frame_size:end*frame_size].tobytes()
+
+
+def _word_count(text: str) -> int:
+    """Approximate word count for short-text heuristics."""
+    if not text:
+        return 0
+    return len(re.findall(r"\w+", text))
 
 
 def build_wav(raw_pcm: bytes) -> bytes:
@@ -268,6 +277,27 @@ def process_utterance(wav_bytes: bytes, tgt_code: str, tgt_name: str, direct_tra
     else:
         text, t_stt, t_translate = result
         english_text = None
+
+    # In low-latency direct mode, retry with two-step STT+Translate when the
+    # output is suspiciously short for a longer utterance.
+    if direct_translate and tgt_code != "en-IN":
+        wc = _word_count(text)
+        suspicious_short = audio_secs >= 1.4 and wc <= 2
+        if suspicious_short:
+            print("  [Accuracy] Retrying with 2-step STT+Translate…")
+            retry = transcribe_and_translate(wav_bytes, tgt_lang=tgt_code, direct_translate=False)
+            if len(retry) == 4:
+                text2, english_text2, t_stt2, t_translate2 = retry
+            else:
+                text2, t_stt2, t_translate2 = retry
+                english_text2 = None
+
+            # Prefer retry result when it has more content.
+            if _word_count(text2) > _word_count(text):
+                text = text2
+                english_text = english_text2
+            t_stt += t_stt2
+            t_translate += t_translate2
 
     if not text or text.strip().lower() in FILLER_PHRASES or len(text.strip()) <= 1:
         print(f"  (filtered noise \u2014 stt: {t_stt:.2f}s)")
