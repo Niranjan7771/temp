@@ -1,0 +1,19 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment files (contains API keys)
+.env
+.env.*
+
+# Downloaded model artifacts (regenerate with download_models.py)
+piper_models/
+
+# Editor / OS artifacts
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,49 @@
+Wearable Voice Translator v2 - Latency Optimization Log
+Date: 2026-04-05
+Workspace: D:\DESIGN\Project
+
+Project summary:
+- Headless audio pipeline for Raspberry Pi earbuds.
+- Mic capture -> VAD -> Sarvam STT + Translate (cloud) -> local TTS (Piper/espeak) -> playback.
+- Primary latency sources: VAD end-of-speech delay + network round trips.
+
+Latency focus areas:
+1) End-of-speech delay (SILENCE_TIMEOUT) before processing starts.
+2) Cloud translation time (two HTTP calls in two-step mode).
+3) First-call TLS and model warmup to Sarvam endpoints.
+4) TTS backend choice (Piper vs edge-tts).
+
+Code updates applied:
+- config.py:
+  - Added STT_MODEL, TRANSLATE_MODEL, TRANSLATE_MODE for centralized tuning.
+  - Added DIRECT_TRANSLATE and DIRECT_TRANSLATE_FALLBACK toggles.
+- sarvam_client.py:
+  - Added optional direct translate path (single call to /speech-to-text-translate with target language).
+  - Pre-warm multiple Sarvam endpoints to reduce first-call latency.
+  - Uses centralized model settings from config.
+- main.py:
+  - Added CLI flags: --direct-translate, --silence-timeout, --max-record-secs.
+  - Uses the new flags to reduce end-of-speech delay and skip the second translate call.
+
+How to run for lowest latency (example):
+- python main.py --lang hindi --direct-translate --silence-timeout 0.25 --max-record-secs 3.5
+- If translation quality drops, remove --direct-translate to return to two-step mode.
+
+Operational notes:
+- Keep Piper TTS installed and models downloaded for lowest TTS time.
+- Use espeak-ng as a zero-latency offline fallback for Tamil/Telugu.
+- Strong WiFi reduces STT and translate round trip time.
+- For noisy environments, increase --threshold to avoid false triggers.
+
+Local demo website:
+- Folder: local_demo
+- Open local_demo/index.html in a browser for the offline demo.
+- The demo simulates latency and uses romanized output for ASCII-only compatibility.
+
+Validation:
+- No automated tests were run.
+
+Network demo server:
+- Added serve_demo.py to serve the local_demo folder over the LAN.
+- Run: python3 serve_demo.py --port 8080
+- Open from phone: http://<pi-ip>:8080

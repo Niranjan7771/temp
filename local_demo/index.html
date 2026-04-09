@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wearable Voice Translator v2 - Web Prototype</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="backdrop"></div>
+
+    <header class="hero">
+      <div class="hero__content">
+        <p class="eyebrow">Wearable Voice Translator v2</p>
+        <h1>Browser-to-audio translation prototype</h1>
+        <p class="lead">This is a working web layer: browser input, live API calls, cloud translation, and synthesized audio playback.</p>
+        <div class="hero__actions">
+          <a class="btn primary" href="#prototype">Open prototype</a>
+          <a class="btn ghost" href="#runbook">Runbook</a>
+        </div>
+        <div class="pill-row">
+          <span class="pill">Live API</span>
+          <span class="pill">Text + Voice</span>
+          <span class="pill">Latency metrics</span>
+        </div>
+      </div>
+      <div class="hero__panel">
+        <div class="panel-card">
+          <h3>Prototype pipeline</h3>
+          <ol class="pipeline">
+            <li>Browser text or mic capture</li>
+            <li>POST request to Python API</li>
+            <li>Sarvam translate or STT+translate</li>
+            <li>Piper/espeak/edge TTS synthesis</li>
+            <li>Audio playback in browser</li>
+          </ol>
+          <div class="panel-meta">
+            <div>
+              <span class="label">Server health</span>
+              <span id="heroHealth" class="value">Checking...</span>
+            </div>
+            <div>
+              <span class="label">Expected total</span>
+              <span class="value">~1.3s to 2.5s</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="prototype" class="section reveal-1">
+        <div class="section-head">
+          <h2>Live prototype</h2>
+          <p>Use text or voice. Every action calls the real backend and returns measured timings.</p>
+        </div>
+        <div class="demo-grid">
+          <div class="card control-card">
+            <div class="connection-row">
+              <span id="apiDot" class="dot dot-warn"></span>
+              <span id="apiStatus" class="connection-text">Checking backend connection...</span>
+              <button id="refreshHealth" class="mini-btn" type="button">Refresh</button>
+            </div>
+
+            <label for="inputText" class="field-label">Input phrase</label>
+            <textarea id="inputText" rows="4" placeholder="Type in your source language, then run translation."></textarea>
+            <div class="chips">
+              <button class="chip" data-phrase="hello">hello</button>
+              <button class="chip" data-phrase="where is the station">where is the station</button>
+              <button class="chip" data-phrase="i need help">i need help</button>
+              <button class="chip" data-phrase="how much does this cost">how much does this cost</button>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label for="sourceLang" class="field-label">Source language</label>
+                <select id="sourceLang">
+                  <option value="english">English</option>
+                  <option value="hindi">Hindi</option>
+                  <option value="tamil">Tamil</option>
+                  <option value="telugu">Telugu</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="targetLang" class="field-label">Target language</label>
+                <select id="targetLang">
+                  <option value="english">English</option>
+                  <option value="hindi">Hindi</option>
+                  <option value="tamil">Tamil</option>
+                  <option value="telugu">Telugu</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label for="ttsBackend" class="field-label">TTS backend</label>
+                <select id="ttsBackend">
+                  <option value="auto">Auto (recommended)</option>
+                  <option value="piper">Piper</option>
+                  <option value="espeak">espeak-ng</option>
+                  <option value="edge">edge-tts</option>
+                </select>
+              </div>
+              <div class="field toggles">
+                <label class="toggle">
+                  <input type="checkbox" id="directMode" checked />
+                  Direct translate (voice)
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="autoPlay" checked />
+                  Auto-play response audio
+                </label>
+              </div>
+            </div>
+
+            <button id="translateBtn" class="btn primary full" type="button">Translate text</button>
+
+            <div class="voice-block">
+              <h3>Voice workflow</h3>
+              <p>Record in the browser, upload to backend, then hear translated speech.</p>
+              <div class="voice-actions">
+                <button id="recordBtn" class="btn ghost" type="button">Start recording</button>
+                <button id="voiceTranslateBtn" class="btn primary" type="button" disabled>Translate recording</button>
+              </div>
+              <div class="voice-meta">
+                <span id="recordState">Recorder idle</span>
+                <span id="recordDuration">00:00</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card output-card">
+            <div class="status-row">
+              <span id="statusText" class="status">Idle</span>
+              <span id="latencyBadge" class="badge">Total: --</span>
+            </div>
+
+            <div class="io-grid">
+              <div>
+                <span class="field-label">Source text</span>
+                <div id="sourceText" class="output-box small">Source text appears here.</div>
+              </div>
+              <div>
+                <span class="field-label">Translated text</span>
+                <div id="outputText" class="output-box">Translated output appears here.</div>
+              </div>
+            </div>
+
+            <audio id="audioPlayer" controls preload="none"></audio>
+            <p id="audioHint" class="note">No synthesized audio yet.</p>
+
+            <div class="metrics">
+              <div>VAD: <span id="vadMs">--</span></div>
+              <div>STT: <span id="sttMs">--</span></div>
+              <div>Translate: <span id="trMs">--</span></div>
+              <div>TTS: <span id="ttsMs">--</span></div>
+            </div>
+            <div class="meter">
+              <div id="progressBar" class="meter__fill"></div>
+            </div>
+            <p id="errorText" class="error-text"></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="latency" class="section reveal-2">
+        <div class="section-head">
+          <h2>Operational checklist</h2>
+          <p>Use these checks when preparing a live field demo.</p>
+        </div>
+        <div class="grid">
+          <div class="card">
+            <h3>API key present</h3>
+            <p>Set SARVAM_API_KEY in your environment before launching the web server.</p>
+          </div>
+          <div class="card">
+            <h3>Microphone permissions</h3>
+            <p>Allow browser mic access so the voice workflow can capture and upload audio.</p>
+          </div>
+          <div class="card">
+            <h3>Backend fallback chain</h3>
+            <p>Use auto TTS to prioritize Piper, then espeak-ng, then edge-tts if needed.</p>
+          </div>
+          <div class="card">
+            <h3>Watch metrics per call</h3>
+            <p>Use STT/translate/TTS timings to identify bottlenecks before deployment.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="runbook" class="section reveal-3">
+        <div class="section-head">
+          <h2>Quick runbook</h2>
+          <p>Start the full web prototype stack with these commands.</p>
+        </div>
+        <div class="card runbook">
+          <div>
+            <h4>Install dependencies</h4>
+            <pre><code>pip install -r requirements.txt</code></pre>
+          </div>
+          <div>
+            <h4>Start web prototype server</h4>
+            <pre><code>python serve_demo.py --port 8080</code></pre>
+          </div>
+          <div>
+            <h4>Open in browser</h4>
+            <pre><code>http://localhost:8080</code></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Wearable Voice Translator v2</span>
+      <span>Web prototype</span>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

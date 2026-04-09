@@ -1,0 +1,16 @@
+# Wearable Voice Translator v2 — Dependencies
+# Core
+requests>=2.31
+python-dotenv>=1.0
+numpy>=1.24
+sounddevice>=0.4.6
+Flask>=3.0
+
+# Local TTS (primary — install on Raspberry Pi)
+piper-tts>=1.2.0
+
+# Cloud TTS fallback (for dev/testing on Windows, or when Piper model unavailable)
+edge-tts>=6.1
+
+# MP3 decoding (edge-tts returns MP3, we need WAV for playback)
+miniaudio>=1.50
