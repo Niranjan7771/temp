@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import io
+import subprocess
 import sys
 import time
 import wave
@@ -353,6 +354,81 @@ def _play_test_tone(output_device=None, gain: float = 1.0):
     print("  Done.")
 
 
+def _device_name_lower(device_index: int | None) -> str:
+    """Best-effort device name lookup (lowercase)."""
+    if device_index is None:
+        return ""
+    try:
+        info = sd.query_devices(device_index)
+        return str(info.get("name", "")).lower()
+    except Exception:
+        return ""
+
+
+def _default_sink_name() -> str | None:
+    """Return Pulse/PipeWire default sink name on Linux, else None."""
+    if sys.platform != "linux":
+        return None
+    try:
+        proc = subprocess.run(
+            ["pactl", "info"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        for line in proc.stdout.splitlines():
+            if line.startswith("Default Sink:"):
+                return line.split(":", 1)[1].strip()
+    except Exception:
+        return None
+    return None
+
+
+def _has_real_sink() -> bool:
+    """True if at least one non-null Pulse sink exists."""
+    if sys.platform != "linux":
+        return True
+    try:
+        proc = subprocess.run(
+            ["pactl", "list", "short", "sinks"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return True  # Unknown state: do not block app.
+        sinks = []
+        for line in proc.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                sinks.append(parts[1])
+        real_sinks = [s for s in sinks if s != "auto_null" and not s.startswith("null.")]
+        return len(real_sinks) > 0
+    except Exception:
+        return True
+
+
+def _guard_against_null_sink(output_device: int | None):
+    """Fail fast when selected output is Pulse/default but only auto_null exists."""
+    dev_name = _device_name_lower(output_device)
+
+    # If caller selected explicit non-Pulse hardware device, skip this guard.
+    if output_device is not None and "pulse" not in dev_name and "default" not in dev_name:
+        return
+
+    sink = _default_sink_name()
+    if sink == "auto_null" or (sink is not None and not _has_real_sink()):
+        print("ERROR: No real audio sink is available (Default Sink: auto_null).")
+        print("Your Bluetooth buds are not connected as an active A2DP sink yet.")
+        print("Run: pactl list short sinks")
+        print("Then reconnect buds via bluetoothctl and set default sink to bluez_output...a2dp-sink")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Wearable Voice Translator v2")
     parser.add_argument(
@@ -418,6 +494,15 @@ def main():
             print(f"ERROR: Could not use output device {args.output_device}: {e}")
             print("Run with --list-devices and pick a device with output channels.")
             sys.exit(1)
+
+    # Detect the active output path and block known silent setup (auto_null sink).
+    selected_output = args.output_device
+    if selected_output is None:
+        try:
+            selected_output = sd.default.device[1]
+        except Exception:
+            selected_output = None
+    _guard_against_null_sink(selected_output)
 
     if args.test_audio:
         try:

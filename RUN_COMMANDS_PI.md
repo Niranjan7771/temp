@@ -172,10 +172,43 @@ List all sinks:
 pactl list short sinks
 ```
 
+If you only see `auto_null`, Bluetooth is not attached as an audio sink yet.
+
+Reconnect buds from terminal:
+
+```bash
+bluetoothctl
+power on
+agent on
+default-agent
+scan on
+# wait until your buds MAC appears, then:
+pair XX:XX:XX:XX:XX:XX
+trust XX:XX:XX:XX:XX:XX
+connect XX:XX:XX:XX:XX:XX
+scan off
+exit
+```
+
+Confirm Bluetooth sink appears:
+
+```bash
+pactl list short sinks
+```
+
+You should now see `bluez_output....a2dp-sink`.
+
 Set Bluetooth sink as default (replace with your sink name):
 
 ```bash
 pactl set-default-sink bluez_output.XX_XX_XX_XX_XX_XX.a2dp-sink
+```
+
+Force A2DP profile if needed:
+
+```bash
+pactl list cards short
+pactl set-card-profile bluez_card.XX_XX_XX_XX_XX_XX a2dp-sink
 ```
 
 Unmute and raise volume:
