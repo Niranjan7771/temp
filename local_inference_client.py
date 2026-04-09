@@ -1,14 +1,15 @@
 """
 Local inference client: on-device STT + on-device translation.
 
-STT: faster-whisper
-Translation: Argos Translate
+STT: faster-whisper (CTranslate2 backend)
+Translation: NLLB-200-distilled-600M via CTranslate2
 
 This module mirrors the public API of sarvam_client.py so the caller can
 switch backends without changing pipeline code.
 """
 
 import io
+import os
 import shutil
 import subprocess
 import threading
@@ -17,8 +18,15 @@ import wave
 
 import numpy as np
 
-from config import LOCAL_STT_COMPUTE_TYPE, LOCAL_STT_DEVICE, LOCAL_STT_MODEL
+from config import (
+    LOCAL_STT_COMPUTE_TYPE,
+    LOCAL_STT_DEVICE,
+    LOCAL_STT_MODEL,
+    NLLB_MODEL,
+    NLLB_LANG_MAP,
+)
 
+# ── faster-whisper (STT) ──────────────────────────────────────────────────
 try:
     from faster_whisper import WhisperModel
 except Exception as exc:
@@ -27,27 +35,39 @@ except Exception as exc:
 else:
     _whisper_import_error = None
 
+# ── CTranslate2 + SentencePiece (NLLB translation) ────────────────────────
 try:
-    from argostranslate import translate as argos_translate
+    import ctranslate2
+    import sentencepiece as spm
 except Exception as exc:
-    argos_translate = None
-    _argos_import_error = exc
+    ctranslate2 = None
+    spm = None
+    _nllb_import_error = exc
 else:
-    _argos_import_error = None
+    _nllb_import_error = None
 
 _stt_lock = threading.Lock()
 _stt_model = None
+_nllb_lock = threading.Lock()
+_nllb_translator = None
+_nllb_tokenizer = None
 
+
+# ── Helper functions ───────────────────────────────────────────────────────
 
 def _bcp47_to_iso(lang_code: str | None) -> str:
-    """Convert BCP-47 style code (en-IN) to ISO639-1 style code (en)."""
     if not lang_code:
         return "en"
     return str(lang_code).split("-", 1)[0].lower()
 
 
+def _bcp47_to_nllb(lang_code: str | None) -> str:
+    if not lang_code:
+        return "eng_Latn"
+    return NLLB_LANG_MAP.get(lang_code, "eng_Latn")
+
+
 def _resample_float32(audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
-    """Simple nearest-neighbor resampling for low-latency compatibility."""
     if from_rate == to_rate or len(audio) == 0:
         return audio.astype(np.float32, copy=False)
     ratio = to_rate / from_rate
@@ -58,7 +78,6 @@ def _resample_float32(audio: np.ndarray, from_rate: int, to_rate: int) -> np.nda
 
 
 def _decode_wav_bytes(audio_bytes: bytes) -> np.ndarray:
-    """Decode WAV bytes to mono float32 at 16kHz."""
     with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
         sr = wf.getframerate()
         channels = wf.getnchannels()
@@ -79,39 +98,21 @@ def _decode_wav_bytes(audio_bytes: bytes) -> np.ndarray:
 
 
 def _decode_with_ffmpeg(audio_bytes: bytes) -> np.ndarray:
-    """Decode arbitrary audio container to mono 16kHz float32 using ffmpeg."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
-        raise RuntimeError(
-            "Audio is not WAV and ffmpeg is not installed. "
-            "Install ffmpeg or send WAV audio."
-        )
+        raise RuntimeError("Audio is not WAV and ffmpeg is not installed.")
 
     cmd = [
-        ffmpeg,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-i",
-        "pipe:0",
-        "-f",
-        "s16le",
-        "-acodec",
-        "pcm_s16le",
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
+        ffmpeg, "-hide_banner", "-loglevel", "error",
+        "-i", "pipe:0",
+        "-f", "s16le", "-acodec", "pcm_s16le",
+        "-ac", "1", "-ar", "16000",
         "pipe:1",
     ]
 
     try:
         proc = subprocess.run(
-            cmd,
-            input=audio_bytes,
-            capture_output=True,
-            check=True,
-            timeout=20,
+            cmd, input=audio_bytes, capture_output=True, check=True, timeout=20,
         )
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or b"").decode("utf-8", errors="ignore").strip()
@@ -125,18 +126,16 @@ def _decode_with_ffmpeg(audio_bytes: bytes) -> np.ndarray:
 
 
 def _decode_audio_to_float32(audio_bytes: bytes) -> np.ndarray:
-    """Decode input audio bytes to mono float32 samples at 16kHz."""
     if len(audio_bytes) >= 12 and audio_bytes[:4] == b"RIFF" and audio_bytes[8:12] == b"WAVE":
         return _decode_wav_bytes(audio_bytes)
     return _decode_with_ffmpeg(audio_bytes)
 
 
-def _get_stt_model() -> WhisperModel:
-    """Load faster-whisper model lazily and cache it for reuse."""
+# ── STT (faster-whisper) ──────────────────────────────────────────────────
+
+def _get_stt_model():
     if WhisperModel is None:
-        raise RuntimeError(
-            "faster-whisper is not installed. Install dependencies from requirements.txt"
-        )
+        raise RuntimeError("faster-whisper is not installed.")
 
     global _stt_model
     if _stt_model is not None:
@@ -153,10 +152,8 @@ def _get_stt_model() -> WhisperModel:
 
 
 def _transcribe_to_english(audio_samples: np.ndarray) -> str:
-    """Transcribe or translate speech audio into English text."""
     model = _get_stt_model()
 
-    # Prefer task=translate so non-English speech also becomes English text.
     try:
         segments, _ = model.transcribe(
             audio_samples,
@@ -168,7 +165,6 @@ def _transcribe_to_english(audio_samples: np.ndarray) -> str:
             vad_filter=True,
         )
     except Exception:
-        # Fallback for models/configs that do not support translate task.
         segments, _ = model.transcribe(
             audio_samples,
             task="transcribe",
@@ -188,95 +184,70 @@ def _transcribe_to_english(audio_samples: np.ndarray) -> str:
     return " ".join(text_parts).strip()
 
 
-def _get_installed_language_map() -> dict[str, object]:
-    """Return installed Argos language objects keyed by ISO code."""
-    if argos_translate is None:
+# ── Translation (NLLB-200 via CTranslate2) ────────────────────────────────
+
+def _get_nllb():
+    if ctranslate2 is None or spm is None:
         raise RuntimeError(
-            "argostranslate is not installed. Install dependencies from requirements.txt"
+            "ctranslate2 or sentencepiece not installed. "
+            "Install: pip install ctranslate2 sentencepiece"
         )
 
-    langs = argos_translate.get_installed_languages()
-    lang_map = {}
-    for lang in langs:
-        code = str(getattr(lang, "code", "")).strip().lower()
-        if code:
-            lang_map[code] = lang
-    return lang_map
+    global _nllb_translator, _nllb_tokenizer
+    if _nllb_translator is not None:
+        return _nllb_translator, _nllb_tokenizer
+
+    with _nllb_lock:
+        if _nllb_translator is None:
+            model_dir = _download_nllb_model()
+            _nllb_translator = ctranslate2.Translator(
+                model_dir, device="cpu", compute_type="int8",
+            )
+            # CTranslate2 NLLB models store the sentencepiece model
+            sp_model_path = os.path.join(model_dir, "sentencepiece.model")
+            if not os.path.exists(sp_model_path):
+                sp_model_path = os.path.join(model_dir, "source.spm")
+            _nllb_tokenizer = spm.SentencePieceProcessor()
+            _nllb_tokenizer.Load(sp_model_path)
+
+    return _nllb_translator, _nllb_tokenizer
 
 
-def _translate_direct(text: str, source_iso: str, target_iso: str) -> str:
-    """Run direct Argos translation for a specific pair."""
-    lang_map = _get_installed_language_map()
-    source_lang = lang_map.get(source_iso)
-    target_lang = lang_map.get(target_iso)
-
-    if source_lang is None or target_lang is None:
-        raise RuntimeError(
-            f"Missing Argos language package: {source_iso}->{target_iso}. "
-            "Run python download_local_models.py"
-        )
-
-    try:
-        translator = source_lang.get_translation(target_lang)
-    except Exception as exc:
-        raise RuntimeError(
-            f"Missing Argos translation pair: {source_iso}->{target_iso}. "
-            "Run python download_local_models.py"
-        ) from exc
-
-    return (translator.translate(text) or "").strip()
+def _download_nllb_model() -> str:
+    from huggingface_hub import snapshot_download
+    model_dir = snapshot_download(NLLB_MODEL)
+    return model_dir
 
 
-def _translate_with_pivot(text: str, source_iso: str, target_iso: str) -> str:
-    """Translate text, pivoting through English when direct pair is unavailable."""
-    if source_iso == target_iso:
-        return text
+def _nllb_translate(text: str, src_lang: str, tgt_lang: str) -> str:
+    translator, tokenizer = _get_nllb()
 
-    try:
-        return _translate_direct(text, source_iso, target_iso)
-    except RuntimeError:
-        pass
+    tokens = tokenizer.Encode(text, out_type=str)
+    source_tokens = [src_lang] + tokens
 
-    if source_iso != "en" and target_iso != "en":
-        mid = _translate_direct(text, source_iso, "en")
-        if not mid:
-            return ""
-        return _translate_direct(mid, "en", target_iso)
-
-    raise RuntimeError(
-        f"No local translation path for {source_iso}->{target_iso}. "
-        "Install matching Argos packages with python download_local_models.py"
+    results = translator.translate_batch(
+        [source_tokens],
+        target_prefix=[[tgt_lang]],
+        beam_size=4,
+        max_decoding_length=256,
     )
 
+    output_tokens = results[0].hypotheses[0]
+    if output_tokens and output_tokens[0] == tgt_lang:
+        output_tokens = output_tokens[1:]
+
+    translated = tokenizer.Decode(output_tokens)
+    return translated.strip()
+
+
+# ── Public API ─────────────────────────────────────────────────────────────
 
 def is_ready() -> tuple[bool, str]:
-    """Best-effort readiness check for local backend dependencies."""
     if _whisper_import_error is not None:
         return (False, f"faster-whisper import failed: {_whisper_import_error}")
-    if _argos_import_error is not None:
-        return (False, f"argostranslate import failed: {_argos_import_error}")
-
-    try:
-        lang_map = _get_installed_language_map()
-    except Exception as exc:
-        return (False, str(exc))
-
-    if not lang_map:
-        return (False, "No Argos language packs installed. Run python download_local_models.py")
-
-    if "en" not in lang_map:
-        return (False, "Argos English package is missing. Run python download_local_models.py")
-
-    missing_optional = [code for code in ("hi", "ta", "te") if code not in lang_map]
-    if missing_optional:
-        return (
-            True,
-            "Local backend ready (missing optional language packs: "
-            + ", ".join(missing_optional)
-            + ")",
-        )
-
-    return (True, "Local backend ready")
+    if _nllb_import_error is not None:
+        return (False, f"NLLB dependencies import failed: {_nllb_import_error}")
+    return (True, "Local backend ready (Whisper + NLLB-200)")
 
 
 def transcribe_and_translate(
@@ -287,16 +258,7 @@ def transcribe_and_translate(
     audio_filename: str = "audio.wav",
     audio_content_type: str = "audio/wav",
 ) -> tuple:
-    """
-    Offline STT + translation path.
-
-    Returns (translated_text, english_text, stt_seconds, translate_seconds)
-    to match the cloud client's API.
-    """
-    del direct_translate
-    del fallback_to_two_step
-    del audio_filename
-    del audio_content_type
+    del direct_translate, fallback_to_two_step, audio_filename, audio_content_type
 
     if not wav_bytes:
         return ("", "", 0.0, 0.0)
@@ -336,20 +298,19 @@ def translate_text(
     target_lang: str = "hi-IN",
     fallback_to_source: bool = True,
 ) -> tuple[str, float]:
-    """Translate plain text with local Argos models."""
     clean_text = (text or "").strip()
     if not clean_text:
         return ("", 0.0)
 
-    source_iso = _bcp47_to_iso(source_lang)
-    target_iso = _bcp47_to_iso(target_lang)
+    src_nllb = _bcp47_to_nllb(source_lang)
+    tgt_nllb = _bcp47_to_nllb(target_lang)
 
-    if source_iso == target_iso:
+    if src_nllb == tgt_nllb:
         return (clean_text, 0.0)
 
     t0 = time.time()
     try:
-        translated = _translate_with_pivot(clean_text, source_iso, target_iso)
+        translated = _nllb_translate(clean_text, src_nllb, tgt_nllb)
         t_translate = time.time() - t0
         if translated:
             return (translated, t_translate)
@@ -358,7 +319,7 @@ def translate_text(
         return ("", t_translate)
     except Exception as exc:
         t_translate = time.time() - t0
-        print(f"  [Local translate error] {exc}")
+        print(f"  [NLLB translate error] {exc}")
         if fallback_to_source:
             return (clean_text, t_translate)
         return ("", t_translate)

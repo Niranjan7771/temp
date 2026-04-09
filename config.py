@@ -23,9 +23,27 @@ if INFERENCE_BACKEND not in {"sarvam", "local"}:
 
 # Local STT configuration (used when INFERENCE_BACKEND=local)
 # Common model values: tiny, base, small
-LOCAL_STT_MODEL = os.getenv("LOCAL_STT_MODEL", "tiny")
+LOCAL_STT_MODEL = os.getenv("LOCAL_STT_MODEL", "small")
 LOCAL_STT_DEVICE = os.getenv("LOCAL_STT_DEVICE", "cpu")
 LOCAL_STT_COMPUTE_TYPE = os.getenv("LOCAL_STT_COMPUTE_TYPE", "int8")
+
+# NLLB-200 translation configuration (used when INFERENCE_BACKEND=local)
+# CTranslate2-converted NLLB model for fast CPU inference
+NLLB_MODEL = os.getenv("NLLB_MODEL", "JustFrederik/nllb-200-distilled-600M-ct2-int8")
+
+# BCP-47 to NLLB language code mapping (FLORES-200 codes)
+NLLB_LANG_MAP = {
+    "en-IN": "eng_Latn",
+    "hi-IN": "hin_Deva",
+    "ta-IN": "tam_Taml",
+    "te-IN": "tel_Telu",
+    "kn-IN": "kan_Knda",
+    "ml-IN": "mal_Mlym",
+    "bn-IN": "ben_Beng",
+    "mr-IN": "mar_Deva",
+    "gu-IN": "guj_Gujr",
+    "pa-IN": "pan_Guru",
+}
 
 # ── Sarvam API ──────────────────────────────────────────────────────────────
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
@@ -45,10 +63,16 @@ DIRECT_TRANSLATE_FALLBACK = True
 # ── Language settings ───────────────────────────────────────────────────────
 # BCP-47 codes used by Sarvam
 LANG_MAP = {
-    "english": "en-IN",
-    "hindi":   "hi-IN",
-    "tamil":   "ta-IN",
-    "telugu":  "te-IN",
+    "english":  "en-IN",
+    "hindi":    "hi-IN",
+    "tamil":    "ta-IN",
+    "telugu":   "te-IN",
+    "kannada":  "kn-IN",
+    "malayalam":"ml-IN",
+    "bengali":  "bn-IN",
+    "marathi":  "mr-IN",
+    "gujarati": "gu-IN",
+    "punjabi":  "pa-IN",
 }
 
 # Default output language (change at runtime via command-line arg)
@@ -75,8 +99,33 @@ PIPER_MODELS_DIR = Path(__file__).resolve().parent / "piper_models"
 PIPER_VOICES = {
     "en-IN": "en_US-lessac-medium",
     "hi-IN": "hi_IN-pratham-medium",
-    "ta-IN": None,   # Not yet available in Piper — falls back to espeak-ng
-    "te-IN": None,   # Not yet available in Piper — falls back to espeak-ng
+    "ml-IN": "ml_IN-arjun-medium",
+    # Tamil, Telugu, Kannada etc. use IndicF5 or espeak-ng fallback
+    "ta-IN": None,
+    "te-IN": None,
+    "kn-IN": None,
+    "bn-IN": None,
+    "mr-IN": None,
+    "gu-IN": None,
+    "pa-IN": None,
+}
+
+# IndicF5 TTS — supports: Assamese, Bengali, Gujarati, Hindi, Kannada,
+# Malayalam, Marathi, Odia, Punjabi, Tamil, Telugu
+# Set to True to prefer IndicF5 over Piper for supported Indic languages
+USE_INDICF5 = os.getenv("USE_INDICF5", "true").strip().lower() in ("1", "true", "yes")
+
+# IndicF5 language code mapping (BCP-47 -> IndicF5 script identifier)
+INDICF5_LANG_MAP = {
+    "hi-IN": "hin",
+    "ta-IN": "tam",
+    "te-IN": "tel",
+    "kn-IN": "kan",
+    "ml-IN": "mal",
+    "bn-IN": "ben",
+    "mr-IN": "mar",
+    "gu-IN": "guj",
+    "pa-IN": "pan",
 }
 
 # ── Fallback TTS ───────────────────────────────────────────────────────────
@@ -86,7 +135,17 @@ EDGE_TTS_VOICES = {
     "hi-IN": "hi-IN-SwaraNeural",
     "ta-IN": "ta-IN-PallaviNeural",
     "te-IN": "te-IN-ShrutiNeural",
+    "kn-IN": "kn-IN-SapnaNeural",
+    "ml-IN": "ml-IN-MidhunNeural",
+    "bn-IN": "bn-IN-TanishaaNeural",
+    "mr-IN": "mr-IN-AarohiNeural",
+    "gu-IN": "gu-IN-DhwaniNeural",
+    "pa-IN": "pa-IN-GurpreetNeural",
 }
+
+# ── Edge Server (Pi→Laptop architecture) ──────────────────────────────────
+EDGE_SERVER_HOST = os.getenv("EDGE_SERVER_HOST", "0.0.0.0")
+EDGE_SERVER_PORT = int(os.getenv("EDGE_SERVER_PORT", "5555"))
 
 # ── Filler / noise phrases to ignore ───────────────────────────────────────
 FILLER_PHRASES = {

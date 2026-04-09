@@ -2,12 +2,13 @@
 TTS Engine — priority chain for local speech synthesis.
 
 Priority order:
-  1. Piper TTS  (local ONNX, ~200-400ms, natural sounding, offline)
-  2. espeak-ng  (local, ~50ms, robotic but ultra-fast, offline)
-  3. edge-tts   (cloud fallback, ~300-500ms, requires internet)
+  1. IndicF5   (Indian languages, near-human quality, 11 Indic langs)
+  2. Piper TTS  (local ONNX, ~200-400ms, natural sounding, offline)
+  3. espeak-ng  (local, ~50ms, robotic but ultra-fast, offline)
+  4. edge-tts   (cloud fallback, ~300-500ms, requires internet)
 
-For the wearable, Piper is the target.  espeak-ng is the guaranteed
-fallback that works on every Linux/Pi out of the box for all languages.
+For English: Piper is primary.
+For Indic languages: IndicF5 is primary when available.
 """
 
 import io
@@ -30,6 +31,7 @@ from config import PIPER_MODELS_DIR, PIPER_VOICES, EDGE_TTS_VOICES
 _piper_available = False
 _espeak_available = shutil.which("espeak-ng") is not None or shutil.which("espeak") is not None
 _edge_tts_available = False
+_indicf5_available = False
 
 try:
     from piper import PiperVoice
@@ -43,6 +45,22 @@ try:
 except ImportError:
     pass
 
+# IndicF5 TTS — loaded on demand
+try:
+    from config import USE_INDICF5, INDICF5_LANG_MAP
+    if USE_INDICF5:
+        try:
+            from transformers import AutoModel as _IndicF5AutoModel
+            _indicf5_available = True
+        except ImportError:
+            pass
+except ImportError:
+    USE_INDICF5 = False
+    INDICF5_LANG_MAP = {}
+
+_indicf5_model = None
+_indicf5_prompts_dir = None
+
 # Cache loaded Piper voice models (load once, reuse)
 _piper_cache: dict = {}
 
@@ -52,11 +70,19 @@ _ESPEAK_LANG = {
     "hi-IN": "hi",
     "ta-IN": "ta",
     "te-IN": "te",
+    "kn-IN": "kn",
+    "ml-IN": "ml",
+    "bn-IN": "bn",
+    "mr-IN": "mr",
+    "gu-IN": "gu",
+    "pa-IN": "pa",
 }
 
 
 def get_backend_name(lang_code: str) -> str:
     """Return which TTS backend will be used for this language."""
+    if _indicf5_available and lang_code in INDICF5_LANG_MAP:
+        return "indicf5"
     if _piper_available and _get_piper_model_path(lang_code):
         return "piper"
     if _espeak_available:
@@ -69,14 +95,18 @@ def get_backend_name(lang_code: str) -> str:
 def synthesize(text: str, lang_code: str = "en-IN", backend: str = "auto") -> bytes:
     """
     Synthesize text to WAV bytes using the specified or best available backend.
-    backend: 'auto' (priority chain), 'piper', 'espeak', 'edge'
+    backend: 'auto' (priority chain), 'indicf5', 'piper', 'espeak', 'edge'
     Returns raw WAV bytes, or empty bytes on failure.
     """
     if not text:
         return b""
 
     # If a specific backend is requested, try it directly
-    if backend == "espeak" and _espeak_available:
+    if backend == "indicf5" and _indicf5_available:
+        result = _indicf5_synthesize(text, lang_code)
+        if result:
+            return result
+    elif backend == "espeak" and _espeak_available:
         result = _espeak_synthesize(text, lang_code)
         if result:
             return result
@@ -98,7 +128,13 @@ def synthesize(text: str, lang_code: str = "en-IN", backend: str = "auto") -> by
         return b""  # specific backend requested but failed
 
     # Auto: priority chain
-    # 1. Try Piper (local, fast, natural)
+    # 1. Try IndicF5 (local, high-quality, Indian languages)
+    if _indicf5_available and lang_code in INDICF5_LANG_MAP:
+        result = _indicf5_synthesize(text, lang_code)
+        if result:
+            return result
+
+    # 2. Try Piper (local, fast, natural — mainly English)
     if _piper_available:
         model_path = _get_piper_model_path(lang_code)
         if model_path:
@@ -106,13 +142,13 @@ def synthesize(text: str, lang_code: str = "en-IN", backend: str = "auto") -> by
             if result:
                 return result
 
-    # 2. Try espeak-ng (local, ultra-fast, robotic)
+    # 3. Try espeak-ng (local, ultra-fast, robotic)
     if _espeak_available:
         result = _espeak_synthesize(text, lang_code)
         if result:
             return result
 
-    # 3. Try edge-tts (cloud fallback)
+    # 4. Try edge-tts (cloud fallback)
     if _edge_tts_available:
         result = _edge_tts_synthesize(text, lang_code)
         if result:
@@ -170,6 +206,104 @@ def preload_piper(lang_code: str):
                 _piper_cache[key] = PiperVoice.load(str(model_path))
             except Exception:
                 pass
+
+
+# ── IndicF5 TTS ────────────────────────────────────────────────────────────
+
+def _get_indicf5_model():
+    """Lazily load IndicF5 model (cached)."""
+    global _indicf5_model, _indicf5_prompts_dir
+    if _indicf5_model is not None:
+        return _indicf5_model
+
+    try:
+        model = _IndicF5AutoModel.from_pretrained(
+            "ai4bharat/IndicF5", trust_remote_code=True
+        )
+        _indicf5_model = model
+        # Check for bundled prompt audios
+        try:
+            from huggingface_hub import snapshot_download
+            repo_path = snapshot_download("ai4bharat/IndicF5")
+            prompts_path = os.path.join(repo_path, "prompts")
+            if os.path.isdir(prompts_path):
+                _indicf5_prompts_dir = prompts_path
+        except Exception:
+            pass
+        return _indicf5_model
+    except Exception as e:
+        print(f"  [IndicF5 load error] {e}")
+        return None
+
+
+def _indicf5_synthesize(text: str, lang_code: str) -> bytes:
+    """Synthesize using IndicF5 model. Returns WAV bytes."""
+    if not _indicf5_available:
+        return b""
+
+    model = _get_indicf5_model()
+    if model is None:
+        return b""
+
+    try:
+        import soundfile as sf
+
+        # Find a reference prompt audio for the language
+        ref_audio, ref_text = _get_indicf5_ref_prompt(lang_code)
+
+        if ref_audio and ref_text:
+            audio = model(text, ref_audio_path=ref_audio, ref_text=ref_text)
+        else:
+            # Try without reference (some versions support this)
+            audio = model(text)
+
+        if audio is None:
+            return b""
+
+        # Convert to WAV bytes
+        audio_np = np.array(audio, dtype=np.float32)
+        if audio_np.dtype == np.int16:
+            audio_np = audio_np.astype(np.float32) / 32768.0
+
+        wav_io = io.BytesIO()
+        sf.write(wav_io, audio_np, 24000, format="WAV", subtype="PCM_16")
+        return wav_io.getvalue()
+    except Exception as e:
+        print(f"  [IndicF5 TTS error] {e}")
+        return b""
+
+
+def _get_indicf5_ref_prompt(lang_code: str) -> tuple:
+    """Get reference prompt audio path and text for IndicF5."""
+    if _indicf5_prompts_dir is None:
+        return (None, None)
+
+    # Look for prompt files matching the language
+    lang_prefix_map = {
+        "hi-IN": "HIN",
+        "ta-IN": "TAM",
+        "te-IN": "TEL",
+        "kn-IN": "KAN",
+        "ml-IN": "MAL",
+        "bn-IN": "BEN",
+        "mr-IN": "MAR",
+        "gu-IN": "GUJ",
+        "pa-IN": "PAN",
+    }
+
+    prefix = lang_prefix_map.get(lang_code)
+    if not prefix:
+        return (None, None)
+
+    # Find first matching prompt file
+    for fname in sorted(os.listdir(_indicf5_prompts_dir)):
+        if fname.startswith(prefix) and fname.endswith(".wav"):
+            ref_audio = os.path.join(_indicf5_prompts_dir, fname)
+            # Default reference text — IndicF5 works best with a ref but can work without
+            ref_text = ""
+            return (ref_audio, ref_text)
+
+    return (None, None)
 
 
 # ── Piper TTS ──────────────────────────────────────────────────────────────

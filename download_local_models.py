@@ -1,56 +1,24 @@
 """
 Download one-time local inference assets:
-1) faster-whisper STT model
-2) Argos Translate language packs
+1) faster-whisper STT model  (default: small)
+2) NLLB-200 translation model (CTranslate2 int8)
 
 Run:
     python download_local_models.py
 """
 
-from config import LOCAL_STT_MODEL
+import os
+from config import LOCAL_STT_MODEL, NLLB_MODEL
 
 try:
     from faster_whisper import WhisperModel
 except Exception:
     WhisperModel = None
 
-try:
-    from argostranslate import package as argos_package
-    from argostranslate import translate as argos_translate
-except Exception:
-    argos_package = None
-    argos_translate = None
-
-
-_TARGET_PAIRS = [
-    ("en", "hi"),
-    ("hi", "en"),
-    ("en", "ta"),
-    ("ta", "en"),
-    ("en", "te"),
-    ("te", "en"),
-]
-
-
-def _installed_pair(src: str, tgt: str) -> bool:
-    if argos_translate is None:
-        return False
-    langs = argos_translate.get_installed_languages()
-    lang_map = {str(lang.code).lower(): lang for lang in langs}
-    src_lang = lang_map.get(src)
-    tgt_lang = lang_map.get(tgt)
-    if src_lang is None or tgt_lang is None:
-        return False
-    try:
-        src_lang.get_translation(tgt_lang)
-        return True
-    except Exception:
-        return False
-
 
 def _ensure_whisper_model() -> None:
     print("=" * 56)
-    print("Local STT model")
+    print("1/2  faster-whisper STT model")
     print("=" * 56)
 
     if WhisperModel is None:
@@ -61,56 +29,54 @@ def _ensure_whisper_model() -> None:
     print(f"Downloading/validating faster-whisper model: {LOCAL_STT_MODEL}")
     try:
         WhisperModel(LOCAL_STT_MODEL, device="cpu", compute_type="int8")
-        print("STT model ready.")
+        print("STT model ready.\n")
     except Exception as exc:
-        print(f"Failed to prepare STT model: {exc}")
+        print(f"Failed to prepare STT model: {exc}\n")
 
 
-def _ensure_argos_packages() -> None:
-    print("\n" + "=" * 56)
-    print("Local translation packages")
+def _ensure_nllb_model() -> None:
+    print("=" * 56)
+    print("2/2  NLLB-200 translation model (CTranslate2 int8)")
     print("=" * 56)
 
-    if argos_package is None or argos_translate is None:
-        print("argostranslate is not installed.")
-        print("Install dependencies first: pip install -r requirements.txt")
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        print("huggingface_hub is not installed.")
+        print("Run: pip install huggingface_hub")
         return
 
     try:
-        argos_package.update_package_index()
-        available = argos_package.get_available_packages()
-    except Exception as exc:
-        print(f"Could not fetch Argos package index: {exc}")
+        import ctranslate2  # noqa: F401
+    except ImportError:
+        print("ctranslate2 is not installed.")
+        print("Run: pip install ctranslate2")
         return
 
-    available_map = {(pkg.from_code, pkg.to_code): pkg for pkg in available}
+    try:
+        import sentencepiece  # noqa: F401
+    except ImportError:
+        print("sentencepiece is not installed.")
+        print("Run: pip install sentencepiece")
+        return
 
-    for src, tgt in _TARGET_PAIRS:
-        if _installed_pair(src, tgt):
-            print(f"{src}->{tgt}: already installed")
-            continue
+    print(f"Downloading/validating NLLB model: {NLLB_MODEL}")
+    try:
+        path = snapshot_download(NLLB_MODEL)
+        print(f"NLLB model cached at: {path}")
 
-        pkg = available_map.get((src, tgt))
-        if pkg is None:
-            print(f"{src}->{tgt}: package not available in current index")
-            continue
-
-        print(f"{src}->{tgt}: downloading...")
-        try:
-            pkg_path = pkg.download()
-            argos_package.install_from_path(pkg_path)
-            if _installed_pair(src, tgt):
-                print(f"{src}->{tgt}: installed")
-            else:
-                print(f"{src}->{tgt}: install finished but pair still unavailable")
-        except Exception as exc:
-            print(f"{src}->{tgt}: install failed ({exc})")
+        # Verify model loads
+        model = ctranslate2.Translator(path, device="cpu", compute_type="int8")
+        del model
+        print("NLLB model ready.\n")
+    except Exception as exc:
+        print(f"Failed to prepare NLLB model: {exc}\n")
 
 
 def main() -> None:
     _ensure_whisper_model()
-    _ensure_argos_packages()
-    print("\nDone. You can now run with --inference-backend local")
+    _ensure_nllb_model()
+    print("Done. You can now run with --inference-backend local")
 
 
 if __name__ == "__main__":

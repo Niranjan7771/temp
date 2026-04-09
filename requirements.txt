@@ -18,5 +18,9 @@ miniaudio>=1.50
 # Local STT (offline)
 faster-whisper>=1.1
 
-# Local translation (offline)
-argostranslate>=1.9
+# Local translation (offline) — NLLB-200 via CTranslate2
+ctranslate2>=4.0
+sentencepiece>=0.2
+
+# IndicF5 TTS (Indian regional languages)
+# Install separately: pip install git+https://github.com/ai4bharat/IndicF5.git

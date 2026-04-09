@@ -1,178 +1,153 @@
 # Wearable Voice Translator v2
 
 Low-latency voice translation pipeline designed for **Raspberry Pi earbuds**.  
-Core mode is headless audio-in -> audio-out, with an optional web prototype UI.
+The Pi captures audio and plays output; a laptop handles all heavy processing (STT, translation, TTS) over the local network.
 
 ## Architecture
 
 ```
-Earbud Mic → sounddevice capture → VAD (RMS-based)
-  → STT + Translate (Sarvam cloud or local models)
-    → Piper TTS               [LOCAL, ~0.2-0.4s]
-    → sounddevice playback → Earbud Speaker
+[Raspberry Pi Zero 2W]                      [Laptop — Edge Server]
+USB Mic → sounddevice capture → VAD          ┌──────────────────────────┐
+  → HTTP POST (WAV) ─────────────────────►   │ faster-whisper (small)   │
+                                              │ NLLB-200 translation     │
+  ◄───────── JSON (text + base64 WAV) ────   │ IndicF5 / Piper TTS      │
+sounddevice playback → Bluetooth Speaker     └──────────────────────────┘
 ```
 
-**Expected latency: ~1.3-2.0s** (down from 3-5s in v1)
+**Expected latency: ~1.0-2.0s** end-to-end over WiFi
 
-The key improvement: TTS runs **locally** via Piper ONNX instead of a cloud API call (which was 2.4-3.2s in v1).
+## Model Stack
 
-## TTS Priority Chain
+| Stage       | Model                            | Languages              | Notes              |
+|-------------|----------------------------------|------------------------|--------------------|
+| STT         | faster-whisper `small` (244M)    | 99 languages           | CTranslate2, int8  |
+| Translation | NLLB-200-distilled-600M          | 200 languages          | CT2, int8          |
+| TTS (Indic) | IndicF5 (ai4bharat, 400M)        | 11 Indian languages    | Near-human quality |
+| TTS (en/hi) | Piper ONNX                       | English, Hindi, Malayalam | Offline, fast   |
+| TTS (fallback) | espeak-ng                     | All languages          | Robotic, offline   |
 
-| Priority | Engine     | Speed       | Quality  | Offline? | Languages          |
-|----------|-----------|-------------|----------|----------|--------------------|
-| 1        | Piper TTS | ~200-400ms  | Natural  | ✓        | English, Hindi     |
-| 2        | espeak-ng | ~50ms       | Robotic  | ✓        | All 4 languages    |
-| 3        | edge-tts  | ~300-500ms  | Natural  | ✗        | All 4 languages    |
+### Supported Indian Languages
 
-Tamil and Telugu don't have Piper models yet, so they fall back to espeak-ng (offline) or edge-tts (cloud).
+English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi
 
-## Quick Start (Windows — Development)
+## Quick Start — Laptop (Edge Server)
 
 ```bash
-cd wearable-v2
-
 # Install dependencies
 pip install -r requirements.txt
 
-# Download Piper voice models (~100MB each for English + Hindi)
-python download_models.py
+# Optional: install IndicF5 TTS for high-quality Indic speech
+pip install git+https://github.com/ai4bharat/IndicF5.git
 
-# Run (defaults to Hindi output)
-python main.py
-
-# Or specify a language
-python main.py --lang telugu
-python main.py --lang tamil
-python main.py --lang english
-```
-
-## Web Prototype (Browser UI)
-
-Run a full end-to-end prototype from browser input to translated audio output:
-
-```bash
-# Requires SARVAM_API_KEY in environment or .env
-pip install -r requirements.txt
-python serve_demo.py --port 8080
-```
-
-Then open:
-
-```text
-http://localhost:8080
-```
-
-The web prototype supports:
-
-- Live backend health checks
-- Text translation via Sarvam Translate API
-- Voice upload (browser recording) -> Sarvam STT + Translate
-- TTS audio synthesis and browser playback
-- Per-call latency metrics (STT / translate / TTS / total)
-
-## Local-Only Inference Mode (No Sarvam)
-
-If you want to remove network latency from STT + translation, use the local backend.
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Download one-time local assets (Whisper + Argos packages):
-
-```bash
+# Download models (Whisper small + NLLB-200, one-time ~1.5GB)
 python download_local_models.py
+
+# Start the edge server (accessible on your LAN)
+python edge_server.py --lang hindi
+# Server starts on http://0.0.0.0:5555
 ```
 
-Run headless app with local backend:
+## Quick Start — Raspberry Pi (Audio Client)
 
 ```bash
-python main.py --inference-backend local --lang hindi --tts piper
+# System dependencies
+sudo apt update
+sudo apt install -y portaudio19-dev
+
+# Python dependencies (lightweight — only requests, sounddevice, numpy)
+pip install requests sounddevice numpy
+
+# Find the laptop's IP from the edge server output, then:
+python pi_client.py --server http://192.168.x.x:5555 --lang hindi
+
+# List audio devices first if needed
+python pi_client.py --list-devices --server http://localhost:5555
 ```
 
-Run web prototype with local backend:
+## Standalone Mode (No Pi)
+
+Run everything on the laptop with a local mic:
 
 ```bash
+# Download models
+python download_local_models.py
+
+# Run headless with local backend
+python main.py --inference-backend local --lang hindi
+
+# Or run web prototype
 python serve_demo.py --port 8080 --inference-backend local
 ```
 
-Notes for local mode:
+## TTS Priority Chain
 
-- Browser voice uploads in web mode may require `ffmpeg` for non-WAV formats.
-- No `SARVAM_API_KEY` is required when backend is `local`.
-- For low latency, keep utterances short and use `tiny` local STT model (`LOCAL_STT_MODEL=tiny`).
-
-## Quick Start (Raspberry Pi — Production)
-
-```bash
-cd wearable-v2
-
-# System dependencies
-sudo apt update
-sudo apt install -y espeak-ng portaudio19-dev
-
-# Python dependencies
-pip install -r requirements.txt
-
-# Download Piper models
-python download_models.py
-
-# List audio devices (find your mic + speaker)
-python main.py --list-devices
-
-# Run with specific mic
-python main.py --lang hindi --input-device 1
-
-# Run on boot (add to /etc/rc.local or systemd service)
-```
+| Priority | Engine     | Speed       | Quality  | Offline? | Languages              |
+|----------|-----------|-------------|----------|----------|------------------------|
+| 1        | IndicF5   | ~1-2s       | Natural  | ✓        | 11 Indian languages    |
+| 2        | Piper TTS | ~200-400ms  | Natural  | ✓        | English, Hindi, Malayalam |
+| 3        | espeak-ng | ~50ms       | Robotic  | ✓        | All languages          |
+| 4        | edge-tts  | ~300-500ms  | Natural  | ✗        | All languages          |
 
 ## Command-Line Options
+
+### edge_server.py (Laptop)
+
+```
+python edge_server.py [options]
+
+  --host HOST           Bind address (default: 0.0.0.0)
+  --port PORT           Port (default: 5555)
+  --lang LANG           Default target language (default: hindi)
+  --inference-backend   sarvam or local (default: local)
+```
+
+### pi_client.py (Raspberry Pi)
+
+```
+python pi_client.py [options]
+
+  --server URL          Edge server URL (required, e.g. http://192.168.1.100:5555)
+  --lang LANG           Target language (default: hindi)
+  --input-device N      Mic device index
+  --output-device N     Speaker device index
+  --gain N              Playback volume multiplier (default: 1.0)
+  --list-devices        Show available audio devices and exit
+```
+
+### main.py (Standalone)
 
 ```
 python main.py [options]
 
-Options:
-  --lang {english,hindi,tamil,telugu}   Output language (default: hindi)
-  --list-devices                        Show available audio devices
-  --input-device N                      Mic device index (from --list-devices)
-  --threshold N                         RMS speech detection threshold (default: 300)
+  --lang LANG           Output language (default: hindi)
+  --inference-backend   sarvam or local (default: local)
+  --list-devices        Show available audio devices
+  --input-device N      Mic device index
+  --threshold N         RMS speech detection threshold (default: 300)
 ```
 
 ## File Structure
 
 ```
 wearable-v2/
-├── main.py              # Entry point — mic capture, VAD, orchestration
-├── config.py            # All settings (languages, thresholds, model paths)
-├── sarvam_client.py     # Sarvam API: STT + Translation (cloud, no TTS)
-├── local_inference_client.py  # Offline STT + translation (Whisper + Argos)
-├── inference_client.py   # Backend router (sarvam/local)
-├── tts_engine.py        # Local TTS: Piper → espeak-ng → edge-tts fallback
-├── download_models.py   # One-time Piper model downloader
-├── download_local_models.py  # One-time local STT/translation asset downloader
-├── requirements.txt     # pip dependencies
-├── piper_models/        # (created by download_models.py)
-│   ├── en_US-lessac-medium.onnx
-│   ├── en_US-lessac-medium.onnx.json
-│   ├── hi_IN-swara-medium.onnx
-│   └── hi_IN-swara-medium.onnx.json
-└── README.md            # This file
+├── main.py                   # Standalone mic capture + VAD + processing
+├── edge_server.py            # Laptop HTTP server (Pi sends audio here)
+├── pi_client.py              # Pi audio client (mic → server → speaker)
+├── config.py                 # All settings (languages, models, thresholds)
+├── local_inference_client.py # STT (Whisper) + Translation (NLLB-200)
+├── inference_client.py       # Backend router (sarvam / local)
+├── tts_engine.py             # TTS: IndicF5 → Piper → espeak → edge-tts
+├── sarvam_client.py          # Sarvam cloud API (optional)
+├── download_models.py        # Piper voice model downloader
+├── download_local_models.py  # Whisper + NLLB-200 model downloader
+├── serve_demo.py             # Web prototype UI
+├── requirements.txt          # pip dependencies
+└── piper_models/             # (created by download_models.py)
 ```
-
-## Latency Comparison
-
-| Component              | v1 (Sarvam TTS) | v2 (Piper TTS) |
-|------------------------|------------------|-----------------|
-| STT (saaras:v2.5)     | 0.3-1.0s         | 0.3-1.0s        |
-| Translate (mayura:v1)  | 0.3-0.7s         | 0.3-0.7s        |
-| **TTS**                | **2.4-3.2s** ☁️  | **0.2-0.4s** 💻 |
-| **End-to-end**         | **3-5s**         | **~1.3-2s**     |
 
 ## Notes
 
-- The `.env` file with `SARVAM_API_KEY` is shared with the v1 folder (auto-detected).
-- Internet is required only for Sarvam backend and one-time local model downloads.
+- The Pi only needs `requests`, `sounddevice`, and `numpy` — no ML libraries.
+- Internet is required only for one-time model downloads and the Sarvam cloud backend.
 - On Pi, connect Bluetooth earbuds via `bluetoothctl` — they appear as a regular audio device.
-- Piper models are ~60-100MB each. Download once, use forever.
+- NLLB-200 covers **all** Indian languages including Tamil and Telugu (which Argos lacked).
