@@ -155,6 +155,7 @@ def _transcribe_to_english(audio_samples: np.ndarray) -> str:
     model = _get_stt_model()
 
     # Use beam_size=5 for better accuracy, language hint for English
+    # initial_prompt helps with proper nouns and domain context
     try:
         segments, info = model.transcribe(
             audio_samples,
@@ -168,6 +169,12 @@ def _transcribe_to_english(audio_samples: np.ndarray) -> str:
             vad_parameters=dict(
                 min_silence_duration_ms=300,
                 speech_pad_ms=200,
+            ),
+            initial_prompt=(
+                "This is a conversation with a person speaking in English or Hindi. "
+                "Common names: Niranjan, Rajan, Priya, Rahul, Kumar. "
+                "Common phrases: Hello, how are you? What is your name? "
+                "Good morning. Good night. Thank you. Where are you going?"
             ),
         )
     except Exception:

@@ -124,8 +124,27 @@ def play_wav(wav_bytes):
             audio = np.clip(audio * _playback_gain, -1.0, 1.0)
 
         _paused.set()
-        sd.play(audio, samplerate=sr, blocking=True, device=_output_device)
-        sd.wait()
+
+        # Use OutputStream for more reliable playback (esp. Bluetooth)
+        audio_int16 = (audio * 32767).astype(np.int16)
+        try:
+            with sd.RawOutputStream(
+                samplerate=sr,
+                channels=1,
+                dtype="int16",
+                device=_output_device,
+            ) as stream:
+                # Write in chunks to avoid buffer issues
+                chunk_size = sr  # 1 second chunks
+                for i in range(0, len(audio_int16), chunk_size):
+                    chunk = audio_int16[i : i + chunk_size]
+                    stream.write(chunk.tobytes())
+                # Small drain delay for Bluetooth
+                time.sleep(0.1)
+        except sd.PortAudioError as e:
+            # Fallback: write temp file and play with aplay
+            print(f"  [sd fallback] {e}")
+            _play_wav_aplay(wav_bytes)
     except Exception as e:
         print(f"  [Play error] {e}")
     finally:
@@ -136,6 +155,25 @@ def play_wav(wav_bytes):
                 _audio_q.get_nowait()
             except queue.Empty:
                 break
+
+
+def _play_wav_aplay(wav_bytes):
+    """Fallback: play WAV via aplay (works reliably with Bluetooth on Pi)."""
+    import subprocess
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
+            f.write(wav_bytes)
+            f.flush()
+            subprocess.run(
+                ["aplay", f.name],
+                timeout=30,
+                capture_output=True,
+            )
+    except FileNotFoundError:
+        pass  # aplay not available
+    except Exception as e:
+        print(f"  [aplay error] {e}")
 
 
 def send_to_server(server_url, wav_bytes, target_lang):
