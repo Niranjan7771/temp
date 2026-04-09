@@ -154,13 +154,12 @@ def _get_stt_model():
 def _transcribe_to_english(audio_samples: np.ndarray) -> str:
     model = _get_stt_model()
 
-    # Use beam_size=5 for better accuracy, language hint for English
-    # initial_prompt helps with proper nouns and domain context
+    # task="translate" auto-detects source language and translates to English
+    # Do NOT set language= so Whisper can handle English, Hindi, or mixed input
     try:
         segments, info = model.transcribe(
             audio_samples,
             task="translate",
-            language="en",
             beam_size=5,
             best_of=1,
             temperature=0.0,
@@ -171,10 +170,9 @@ def _transcribe_to_english(audio_samples: np.ndarray) -> str:
                 speech_pad_ms=200,
             ),
             initial_prompt=(
-                "This is a conversation with a person speaking in English or Hindi. "
+                "A person is speaking clearly in a conversation. "
                 "Common names: Niranjan, Rajan, Priya, Rahul, Kumar. "
-                "Common phrases: Hello, how are you? What is your name? "
-                "Good morning. Good night. Thank you. Where are you going?"
+                "Transcribe accurately."
             ),
         )
     except Exception:
@@ -200,14 +198,14 @@ def _transcribe_to_english(audio_samples: np.ndarray) -> str:
     if result:
         words = result.split()
         # Detect single-word repetition (e.g. "Allah Allah Allah...")
-        if len(words) >= 4:
+        if len(words) >= 6:
             unique = set(w.lower().strip(".,!?") for w in words)
             if len(unique) <= 2:
                 return ""
-        # Detect common Whisper noise hallucinations
+        # Detect common Whisper noise hallucinations (only obvious ones)
         _HALLUCINATIONS = {
-            "thank you", "thanks for watching", "bye",
-            "you", "the end", "subscribe",
+            "thanks for watching", "the end", "subscribe",
+            "please subscribe", "like and subscribe",
         }
         if result.lower().strip(".,!? ") in _HALLUCINATIONS:
             return ""
