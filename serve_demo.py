@@ -12,11 +12,16 @@ Usage:
 
 import argparse
 import base64
+import io
 import socket
+import threading
 import time
+import wave
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
+import numpy as np
+import sounddevice as sd
 
 from config import LANG_MAP, SARVAM_API_KEY
 from sarvam_client import transcribe_and_translate, translate_text
@@ -32,6 +37,48 @@ LANG_LABELS = {
     "tamil": "Tamil",
     "telugu": "Telugu",
 }
+
+_play_lock = threading.Lock()
+
+
+def _safe_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _play_wav_bytes(wav_bytes: bytes, output_device: int | None, playback_gain: float) -> None:
+    if not wav_bytes or len(wav_bytes) < 44:
+        return
+
+    with _play_lock:
+        try:
+            buf = io.BytesIO(wav_bytes)
+            with wave.open(buf, "rb") as wf:
+                sr = wf.getframerate()
+                ch = wf.getnchannels()
+                sw = wf.getsampwidth()
+                frames = wf.readframes(wf.getnframes())
+
+            if sw == 2:
+                audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32767.0
+            elif sw == 1:
+                audio = np.frombuffer(frames, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+            else:
+                return
+
+            if ch > 1:
+                audio = audio.reshape(-1, ch)[:, 0]
+
+            if playback_gain != 1.0:
+                audio = np.clip(audio * playback_gain, -1.0, 1.0)
+
+            sd.stop()
+            sd.play(audio, samplerate=sr, blocking=True, device=output_device)
+            sd.wait()
+        except Exception:
+            return
 
 
 def _get_primary_ip() -> str | None:
@@ -90,6 +137,10 @@ def _build_app() -> Flask:
     @app.get("/")
     def index():
         return send_from_directory(STATIC_DIR, "index.html")
+
+    @app.get("/edge")
+    def edge_page():
+        return send_from_directory(STATIC_DIR, "edge.html")
 
     @app.get("/api/health")
     def health():
@@ -233,6 +284,59 @@ def _build_app() -> Flask:
                     "selected": get_backend_name(target_code),
                     "audioWavBase64": audio_b64,
                 },
+            }
+        )
+
+    @app.post("/api/speak")
+    def speak_on_pi():
+        payload = request.get_json(silent=True) or {}
+
+        text = (payload.get("text") or "").strip()
+        if not text:
+            return jsonify({"error": "text is required"}), 400
+
+        target_key, target_code = _normalize_lang(payload.get("targetLang"), fallback="hindi")
+        source_key, source_code = _normalize_lang(payload.get("sourceLang"), fallback="english")
+        tts_backend = (payload.get("ttsBackend") or "auto").strip().lower() or "auto"
+
+        output_device = _safe_int(payload.get("outputDevice"), default=None)
+        playback_gain = float(payload.get("playbackGain") or 1.0)
+        playback_gain = max(0.1, min(4.0, playback_gain))
+
+        if source_code != target_code:
+            if not SARVAM_API_KEY:
+                return jsonify({"error": "SARVAM_API_KEY is not configured"}), 503
+            translated, t_translate = translate_text(
+                text,
+                source_lang=source_code,
+                target_lang=target_code,
+                fallback_to_source=False,
+            )
+            if not translated:
+                return jsonify({"error": "translation failed"}), 422
+        else:
+            translated = text
+            t_translate = 0.0
+
+        wav_bytes = synthesize(translated, target_code, backend=tts_backend)
+        if not wav_bytes:
+            return jsonify({"error": "tts failed"}), 500
+
+        threading.Thread(
+            target=_play_wav_bytes,
+            args=(wav_bytes, output_device, playback_gain),
+            daemon=True,
+        ).start()
+
+        return jsonify(
+            {
+                "status": "queued",
+                "sourceText": text,
+                "translatedText": translated,
+                "targetLang": target_key,
+                "targetCode": target_code,
+                "translateSeconds": t_translate,
+                "ttsBackend": get_backend_name(target_code),
             }
         )
 

@@ -116,6 +116,19 @@ python3 main.py --lang english
 python3 main.py --lang hindi --input-device 1
 ```
 
+### Option 1: Phone edge STT → Pi TTS
+Run the web server on the Pi:
+```bash
+python serve_demo.py --port 8080
+```
+
+Open this on your phone:
+```text
+http://PI_IP:8080/edge
+```
+
+Use phone dictation to send text and let the Pi handle translation + TTS playback.
+
 ### Adjust speech detection sensitivity:
 ```bash
 python3 main.py --lang hindi --threshold 800

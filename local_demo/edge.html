@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Phone Edge Mode - Wearable Voice Translator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page">
+    <div class="backdrop"></div>
+
+    <header class="hero">
+      <div class="hero__content">
+        <p class="eyebrow">Phone Edge Mode</p>
+        <h1>Phone STT + Pi TTS</h1>
+        <p class="lead">
+          Use your phone for speech-to-text, send text to the Pi, and let the Pi
+          speak through its Bluetooth audio output.
+        </p>
+        <div class="hero__actions">
+          <a class="btn primary" href="#edge">Open edge panel</a>
+          <a class="btn ghost" href="/">Back to demo</a>
+        </div>
+        <div class="pill-row">
+          <span class="pill">Low latency</span>
+          <span class="pill">Phone mic</span>
+          <span class="pill">Pi speaker</span>
+        </div>
+      </div>
+      <div class="hero__panel">
+        <div class="panel-card">
+          <h3>Workflow</h3>
+          <ol class="pipeline">
+            <li>Dictate on phone (or type)</li>
+            <li>Send text to Pi</li>
+            <li>Pi translates + plays TTS</li>
+          </ol>
+          <div class="panel-meta">
+            <div>
+              <span class="label">Server health</span>
+              <span id="edgeHealth" class="value">Checking...</span>
+            </div>
+            <div>
+              <span class="label">Status</span>
+              <span id="edgeStatus" class="value">Idle</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section id="edge" class="section reveal-1">
+        <div class="section-head">
+          <h2>Edge control panel</h2>
+          <p>Tap the mic on your keyboard or use the dictation button below.</p>
+        </div>
+        <div class="demo-grid">
+          <div class="card control-card">
+            <label for="edgeText" class="field-label">Recognized text</label>
+            <textarea id="edgeText" rows="4" placeholder="Speak or type here..."></textarea>
+
+            <div class="row">
+              <div class="field">
+                <label for="edgeSource" class="field-label">Source language</label>
+                <select id="edgeSource">
+                  <option value="english">English</option>
+                  <option value="hindi">Hindi</option>
+                  <option value="tamil">Tamil</option>
+                  <option value="telugu">Telugu</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="edgeTarget" class="field-label">Target language</label>
+                <select id="edgeTarget">
+                  <option value="hindi" selected>Hindi</option>
+                  <option value="english">English</option>
+                  <option value="tamil">Tamil</option>
+                  <option value="telugu">Telugu</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label for="edgeTts" class="field-label">TTS backend</label>
+                <select id="edgeTts">
+                  <option value="auto" selected>Auto</option>
+                  <option value="piper">Piper</option>
+                  <option value="espeak">espeak-ng</option>
+                  <option value="edge">edge-tts</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="edgeOutput" class="field-label">Pi output device</label>
+                <input id="edgeOutput" type="number" placeholder="1" />
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label for="edgeGain" class="field-label">Playback gain</label>
+                <input id="edgeGain" type="number" step="0.1" value="1.2" />
+              </div>
+              <div class="field">
+                <label for="edgeNote" class="field-label">Notes</label>
+                <div id="edgeNote" class="output-box small">Use phone keyboard mic if dictation is unavailable.</div>
+              </div>
+            </div>
+
+            <div class="hero__actions">
+              <button id="edgeStart" class="btn ghost" type="button">Start dictation</button>
+              <button id="edgeStop" class="btn ghost" type="button" disabled>Stop</button>
+              <button id="edgeSend" class="btn primary" type="button">Send to Pi</button>
+            </div>
+            <p id="edgeError" class="error-text"></p>
+          </div>
+
+          <div class="card output-card">
+            <div class="status-row">
+              <span class="status">Pi response</span>
+            </div>
+            <div class="io-grid">
+              <div>
+                <span class="field-label">Translated text</span>
+                <div id="edgeTranslated" class="output-box">Waiting...</div>
+              </div>
+              <div>
+                <span class="field-label">Backend message</span>
+                <div id="edgeMessage" class="output-box small">--</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Wearable Voice Translator v2</span>
+      <span>Phone edge mode</span>
+    </footer>
+  </div>
+
+  <script src="edge.js"></script>
+</body>
+</html>

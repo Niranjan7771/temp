@@ -147,6 +147,17 @@ Open on phone browser:
 http://PI_IP:8080
 ```
 
+### Option 1: Phone edge STT → Pi TTS (low latency)
+
+Start the server on the Pi (same as above), then open this on your phone:
+
+```text
+http://PI_IP:8080/edge
+```
+
+Use your phone keyboard mic (dictation) or the Start dictation button if available.
+Tap "Send to Pi" to translate and play audio on the Pi earbuds.
+
 ## 12) Quick Troubleshooting
 
 ### If audio modules fail
