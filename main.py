@@ -46,7 +46,7 @@ from config import (
     RMS_THRESHOLD, SILENCE_TIMEOUT, MAX_RECORD_SECS, MIN_SPEECH_RMS,
     FILLER_PHRASES, MAX_WAV_KB,
 )
-from sarvam_client import transcribe_and_translate
+from sarvam_client import transcribe_and_translate, translate_text
 from tts_engine import synthesize, synthesize_stream, print_status, get_backend_name, preload_piper
 
 
@@ -171,6 +171,23 @@ def _transcript_score(text: str, audio_secs: float) -> int:
     if _is_suspicious_short_transcript(cleaned, audio_secs):
         score -= 2
     return score
+
+
+_SCRIPT_RANGES = {
+    "hi-IN": r"[\u0900-\u097F]",  # Devanagari
+    "ta-IN": r"[\u0B80-\u0BFF]",  # Tamil
+    "te-IN": r"[\u0C00-\u0C7F]",  # Telugu
+}
+
+
+def _contains_target_script(text: str, tgt_code: str) -> bool:
+    """Return True if text contains characters from the target script."""
+    if not text:
+        return False
+    pattern = _SCRIPT_RANGES.get(tgt_code)
+    if not pattern:
+        return False
+    return re.search(pattern, text) is not None
 
 
 def build_wav(raw_pcm: bytes) -> bytes:
@@ -348,6 +365,23 @@ def process_utterance(wav_bytes: bytes, tgt_code: str, tgt_name: str, direct_tra
     if (not _allow_short_replies) and _is_suspicious_short_transcript(text, audio_secs):
         print(f"  (low-confidence short transcript skipped — stt: {t_stt:.2f}s)")
         return
+
+    # If target is non-English but output is still English, retry translation once.
+    if tgt_code != "en-IN" and text and not _contains_target_script(text, tgt_code):
+        normalized = _normalize_text(text)
+        if normalized:
+            print("  [Translate] Retrying translation for non-English output…")
+            translated, t_tr = translate_text(
+                text,
+                source_lang="en-IN",
+                target_lang=tgt_code,
+                fallback_to_source=False,
+            )
+            if translated:
+                if english_text is None:
+                    english_text = text
+                text = translated
+                t_translate += t_tr
 
     if not text or text.strip().lower() in FILLER_PHRASES or len(text.strip()) <= 1:
         print(f"  (filtered noise \u2014 stt: {t_stt:.2f}s)")

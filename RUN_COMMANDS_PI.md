@@ -246,6 +246,20 @@ Quick Linux audio test (outside app):
 speaker-test -D pulse -t sine -f 1000 -l 1
 ```
 
+### If audio is too loud
+
+Lower sink volume:
+
+```bash
+pactl set-sink-volume @DEFAULT_SINK@ 70%
+```
+
+Lower app gain:
+
+```bash
+python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1000 --silence-timeout 0.35 --min-record-secs 1.2 --max-record-secs 4.0 --trim-threshold 220 --post-playback-deaf-secs 0.45 --tts piper --playback-gain 1.0
+```
+
 ## 13) Shutdown Raspberry Pi
 
 Shutdown immediately:

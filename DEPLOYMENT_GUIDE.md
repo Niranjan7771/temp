@@ -141,6 +141,16 @@ Latency vs accuracy:
 - Keep `--direct-translate` off for best accuracy (default behavior).
 - Direct mode now auto-retries with 2-step STT+Translate when long speech returns suspiciously short output.
 
+### If audio is too loud
+```bash
+pactl set-sink-volume @DEFAULT_SINK@ 70%
+```
+
+Or reduce app output gain:
+```bash
+python3 main.py --lang hindi --input-device 1 --output-device 1 --threshold 1000 --silence-timeout 0.35 --min-record-secs 1.2 --max-record-secs 4.0 --trim-threshold 220 --post-playback-deaf-secs 0.45 --tts piper --playback-gain 1.0
+```
+
 ---
 
 ## 10. Run on Boot (Optional — Systemd Service)
