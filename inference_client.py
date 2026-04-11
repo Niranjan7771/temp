@@ -17,7 +17,15 @@ except Exception as exc:
 else:
     _local_import_error = None
 
-_VALID_BACKENDS = {"sarvam", "local"}
+try:
+    import deepgram_client as _deepgram
+except Exception as exc:
+    _deepgram = None
+    _deepgram_import_error = exc
+else:
+    _deepgram_import_error = None
+
+_VALID_BACKENDS = {"sarvam", "local", "deepgram"}
 _active_backend = INFERENCE_BACKEND if INFERENCE_BACKEND in _VALID_BACKENDS else "sarvam"
 
 
@@ -42,6 +50,11 @@ def backend_ready() -> tuple[bool, str]:
             return (False, "SARVAM_API_KEY is not configured")
         return (True, "Sarvam backend ready")
 
+    if _active_backend == "deepgram":
+        if _deepgram is None:
+            return (False, f"Deepgram backend import failed: {_deepgram_import_error}")
+        return _deepgram.is_ready()
+
     if _local is None:
         return (False, f"Local backend import failed: {_local_import_error}")
 
@@ -51,6 +64,25 @@ def backend_ready() -> tuple[bool, str]:
 def backend_status() -> str:
     """Convenience status string for logs/UI."""
     return backend_ready()[1]
+
+
+def preload_backend() -> tuple[bool, str]:
+    """Warm up selected backend models/resources at startup."""
+    if _active_backend == "local":
+        if _local is None:
+            return (False, f"Local backend import failed: {_local_import_error}")
+        if hasattr(_local, "preload_models"):
+            return _local.preload_models()
+        return _local.is_ready()
+
+    if _active_backend == "deepgram":
+        if _deepgram is None:
+            return (False, f"Deepgram backend import failed: {_deepgram_import_error}")
+        if hasattr(_deepgram, "preload_models"):
+            return _deepgram.preload_models()
+        return _deepgram.is_ready()
+
+    return backend_ready()
 
 
 def transcribe_and_translate(
@@ -66,6 +98,18 @@ def transcribe_and_translate(
         if _local is None:
             raise RuntimeError(f"Local backend import failed: {_local_import_error}")
         return _local.transcribe_and_translate(
+            wav_bytes,
+            tgt_lang=tgt_lang,
+            direct_translate=direct_translate,
+            fallback_to_two_step=fallback_to_two_step,
+            audio_filename=audio_filename,
+            audio_content_type=audio_content_type,
+        )
+
+    if _active_backend == "deepgram":
+        if _deepgram is None:
+            raise RuntimeError(f"Deepgram backend import failed: {_deepgram_import_error}")
+        return _deepgram.transcribe_and_translate(
             wav_bytes,
             tgt_lang=tgt_lang,
             direct_translate=direct_translate,
@@ -95,6 +139,16 @@ def translate_text(
         if _local is None:
             raise RuntimeError(f"Local backend import failed: {_local_import_error}")
         return _local.translate_text(
+            text,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            fallback_to_source=fallback_to_source,
+        )
+
+    if _active_backend == "deepgram":
+        if _deepgram is None:
+            raise RuntimeError(f"Deepgram backend import failed: {_deepgram_import_error}")
+        return _deepgram.translate_text(
             text,
             source_lang=source_lang,
             target_lang=target_lang,

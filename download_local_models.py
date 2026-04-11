@@ -15,6 +15,11 @@ try:
 except Exception:
     WhisperModel = None
 
+try:
+    from huggingface_hub import snapshot_download
+except Exception:
+    snapshot_download = None
+
 
 def _ensure_whisper_model() -> None:
     print("=" * 56)
@@ -26,9 +31,29 @@ def _ensure_whisper_model() -> None:
         print("Install dependencies first: pip install -r requirements.txt")
         return
 
-    print(f"Downloading/validating faster-whisper model: {LOCAL_STT_MODEL}")
+    if snapshot_download is None:
+        print("huggingface_hub is not installed.")
+        print("Install dependencies first: pip install -r requirements.txt")
+        return
+
+    model_ref = (LOCAL_STT_MODEL or "small").strip() or "small"
+    repo_id = model_ref if "/" in model_ref else f"Systran/faster-whisper-{model_ref}"
+    print(f"Downloading/validating faster-whisper model: {repo_id}")
     try:
-        WhisperModel(LOCAL_STT_MODEL, device="cpu", compute_type="int8")
+        model_dir = snapshot_download(repo_id=repo_id)
+        model_bin = os.path.join(model_dir, "model.bin")
+        if not os.path.isfile(model_bin):
+            raise RuntimeError(
+                f"Whisper snapshot is incomplete at '{model_dir}' (missing model.bin)"
+            )
+
+        WhisperModel(
+            model_dir,
+            device="cpu",
+            compute_type="int8",
+            local_files_only=True,
+        )
+        print(f"STT model cached at: {model_dir}")
         print("STT model ready.\n")
     except Exception as exc:
         print(f"Failed to prepare STT model: {exc}\n")
@@ -39,9 +64,7 @@ def _ensure_nllb_model() -> None:
     print("2/2  NLLB-200 translation model (CTranslate2 int8)")
     print("=" * 56)
 
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError:
+    if snapshot_download is None:
         print("huggingface_hub is not installed.")
         print("Run: pip install huggingface_hub")
         return

@@ -157,7 +157,7 @@ def _build_app() -> Flask:
         return jsonify(
             {
                 "status": "ok",
-                "apiKeyConfigured": ready if backend == "sarvam" else True,
+                "apiKeyConfigured": ready if backend in {"sarvam", "deepgram"} else True,
                 "inferenceBackend": backend,
                 "inferenceReady": ready,
                 "inferenceStatus": status,
@@ -383,7 +383,7 @@ def main():
     parser = argparse.ArgumentParser(description="Serve the web prototype over the network")
     parser.add_argument("--port", type=int, default=8080, help="Port to serve on (default: 8080)")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0)")
-    parser.add_argument("--inference-backend", choices=["sarvam", "local"],
+    parser.add_argument("--inference-backend", choices=["sarvam", "local", "deepgram"],
                         default=INFERENCE_BACKEND,
                         help=f"Inference backend (default: {INFERENCE_BACKEND})")
     args = parser.parse_args()

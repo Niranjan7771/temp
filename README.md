@@ -20,7 +20,7 @@ sounddevice playback → Bluetooth Speaker     └──────────
 
 | Stage       | Model                            | Languages              | Notes              |
 |-------------|----------------------------------|------------------------|--------------------|
-| STT         | faster-whisper `small` (244M)    | 99 languages           | CTranslate2, int8  |
+| STT         | faster-whisper `small` or Deepgram Nova | 99 languages | Local or cloud |
 | Translation | NLLB-200-distilled-600M          | 200 languages          | CT2, int8          |
 | TTS (Indic) | IndicF5 (ai4bharat, 400M)        | 11 Indian languages    | Near-human quality |
 | TTS (en/hi) | Piper ONNX                       | English, Hindi, Malayalam | Offline, fast   |
@@ -45,6 +45,10 @@ python download_local_models.py
 # Start the edge server (accessible on your LAN)
 python edge_server.py --lang hindi
 # Server starts on http://0.0.0.0:5555
+
+# Optional: Deepgram Nova STT + local NLLB translation
+export DEEPGRAM_API_KEY="your_deepgram_key"
+python edge_server.py --lang hindi --inference-backend deepgram
 ```
 
 ## Quick Start — Raspberry Pi (Audio Client)
@@ -98,7 +102,7 @@ python edge_server.py [options]
   --host HOST           Bind address (default: 0.0.0.0)
   --port PORT           Port (default: 5555)
   --lang LANG           Default target language (default: hindi)
-  --inference-backend   sarvam or local (default: local)
+  --inference-backend   sarvam, local, or deepgram (default: local)
 ```
 
 ### pi_client.py (Raspberry Pi)
@@ -120,7 +124,7 @@ python pi_client.py [options]
 python main.py [options]
 
   --lang LANG           Output language (default: hindi)
-  --inference-backend   sarvam or local (default: local)
+  --inference-backend   sarvam, local, or deepgram (default: local)
   --list-devices        Show available audio devices
   --input-device N      Mic device index
   --threshold N         RMS speech detection threshold (default: 300)
@@ -148,6 +152,6 @@ wearable-v2/
 ## Notes
 
 - The Pi only needs `requests`, `sounddevice`, and `numpy` — no ML libraries.
-- Internet is required only for one-time model downloads and the Sarvam cloud backend.
+- Internet is required for cloud backends (Sarvam, Deepgram) and one-time model downloads.
 - On Pi, connect Bluetooth earbuds via `bluetoothctl` — they appear as a regular audio device.
 - NLLB-200 covers **all** Indian languages including Tamil and Telugu (which Argos lacked).

@@ -39,6 +39,7 @@ from inference_client import (
     get_backend,
     backend_ready,
     backend_status,
+    preload_backend,
     transcribe_and_translate,
     translate_text,
 )
@@ -73,6 +74,10 @@ def process_audio():
       target_lang: BCP-47 code like hi-IN (optional, uses server default)
     """
     t_start = time.time()
+
+    ready, status_msg = backend_ready()
+    if not ready:
+        return jsonify({"error": status_msg, "inference_backend": get_backend()}), 503
 
     # Get audio file
     if "audio" not in request.files:
@@ -149,6 +154,10 @@ def translate_text_endpoint():
     if not text:
         return jsonify({"error": "No text provided"}), 400
 
+    ready, status_msg = backend_ready()
+    if not ready:
+        return jsonify({"error": status_msg, "inference_backend": get_backend()}), 503
+
     try:
         translated, t_ms = translate_text(
             text, source_lang=source_lang, target_lang=target_lang,
@@ -188,7 +197,7 @@ def main():
     )
     parser.add_argument(
         "--inference-backend", default="local",
-        choices=["sarvam", "local"],
+        choices=["sarvam", "local", "deepgram"],
         help="Inference backend",
     )
     args = parser.parse_args()
@@ -196,7 +205,14 @@ def main():
     _default_tgt_lang = LANG_MAP.get(args.lang, "hi-IN")
     set_backend(args.inference_backend)
 
+    preload_ok, preload_msg = preload_backend()
+    if not preload_ok:
+        print(f"WARNING: Backend preload failed — {preload_msg}")
+
     ready, msg = backend_ready()
+    if not preload_ok:
+        ready = False
+        msg = preload_msg
     if not ready:
         print(f"WARNING: Backend not ready — {msg}")
 

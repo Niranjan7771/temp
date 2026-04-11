@@ -17,8 +17,9 @@ else:
 # ── Inference backend selection 
 # sarvam: cloud STT + translation
 # local:  on-device STT + translation
+# deepgram: Deepgram STT + local NLLB translation
 INFERENCE_BACKEND = os.getenv("INFERENCE_BACKEND", "sarvam").strip().lower()
-if INFERENCE_BACKEND not in {"sarvam", "local"}:
+if INFERENCE_BACKEND not in {"sarvam", "local", "deepgram"}:
     INFERENCE_BACKEND = "sarvam"
 
 # Local STT configuration (used when INFERENCE_BACKEND=local)
@@ -59,6 +60,18 @@ TRANSLATE_MODE = "formal"
 # and skip the separate translate call.
 DIRECT_TRANSLATE = False
 DIRECT_TRANSLATE_FALLBACK = True
+
+# ── Deepgram API (STT-only backend) ───────────────────────────────────────
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "").strip()
+DEEPGRAM_BASE_URL = os.getenv("DEEPGRAM_BASE_URL", "https://api.deepgram.com/v1").strip()
+DEEPGRAM_STT_MODEL = os.getenv("DEEPGRAM_STT_MODEL", "nova-2").strip()
+# Use ISO language (e.g. en, hi) or "auto" for detect_language.
+DEEPGRAM_SOURCE_LANG = os.getenv("DEEPGRAM_SOURCE_LANG", "en").strip().lower()
+try:
+    DEEPGRAM_TIMEOUT_SECS = float(os.getenv("DEEPGRAM_TIMEOUT_SECS", "20"))
+except ValueError:
+    DEEPGRAM_TIMEOUT_SECS = 20.0
+DEEPGRAM_TIMEOUT_SECS = max(5.0, DEEPGRAM_TIMEOUT_SECS)
 
 # ── Language settings ───────────────────────────────────────────────────────
 # BCP-47 codes used by Sarvam

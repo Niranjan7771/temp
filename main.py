@@ -600,7 +600,7 @@ def main():
                         help="TTS backend: auto (best available), piper, espeak (fastest), edge (cloud)")
     parser.add_argument("--direct-translate", action="store_true",
                         help="Use a single STT+Translate call (lower latency, skips English preview).")
-    parser.add_argument("--inference-backend", choices=["sarvam", "local"],
+    parser.add_argument("--inference-backend", choices=["sarvam", "local", "deepgram"],
                         default=INFERENCE_BACKEND,
                         help=f"Inference backend (default: {INFERENCE_BACKEND})")
     parser.add_argument("--calibrate", action="store_true",

@@ -34,6 +34,8 @@ RMS_THRESHOLD = 300
 SILENCE_TIMEOUT = 0.8
 MAX_RECORD_SECS = 10
 MIN_SPEECH_RMS = 300
+SERVER_TIMEOUT_SECS = 60
+SERVER_RETRY_INTERVAL_SECS = 2.0
 
 LANG_MAP = {
     "english":  "en-IN",
@@ -182,11 +184,21 @@ def send_to_server(server_url, wav_bytes, target_lang):
     try:
         files = {"audio": ("audio.wav", wav_bytes, "audio/wav")}
         data = {"target_lang": target_lang}
-        resp = requests.post(url, files=files, data=data, timeout=30)
-        resp.raise_for_status()
+        resp = requests.post(url, files=files, data=data, timeout=SERVER_TIMEOUT_SECS)
+        if resp.status_code >= 400:
+            try:
+                payload = resp.json()
+                message = payload.get("error") or payload
+            except Exception:
+                message = resp.text.strip() or resp.reason
+            print(f"  [Server error {resp.status_code}] {message}")
+            return None
         return resp.json()
     except requests.exceptions.ConnectionError:
         print("  [ERROR] Cannot connect to edge server. Is it running?")
+        return None
+    except requests.exceptions.ReadTimeout:
+        print(f"  [Server error] Read timed out after {SERVER_TIMEOUT_SECS}s")
         return None
     except Exception as e:
         print(f"  [Server error] {e}")
@@ -203,6 +215,31 @@ def check_server(server_url):
         return False, str(e)
 
 
+def wait_for_server(server_url, timeout_secs: int) -> tuple[bool, str]:
+    """Wait for /api/health to report ready before starting mic capture."""
+    if timeout_secs == 0:
+        deadline = None
+    else:
+        deadline = time.time() + max(1, timeout_secs)
+
+    attempt = 0
+    last_msg = ""
+    while True:
+        ok, msg = check_server(server_url)
+        if ok:
+            return True, msg
+
+        last_msg = msg
+        attempt += 1
+        if attempt == 1 or attempt % 5 == 0:
+            print(f"  Waiting for server... {msg}")
+
+        if deadline is not None and time.time() >= deadline:
+            return False, last_msg
+
+        time.sleep(SERVER_RETRY_INTERVAL_SECS)
+
+
 def main():
     global _mic_rate, _output_device, _playback_gain
 
@@ -212,6 +249,12 @@ def main():
     parser.add_argument("--input-device", type=int, default=None, help="Mic device index")
     parser.add_argument("--output-device", type=int, default=None, help="Speaker device index")
     parser.add_argument("--gain", type=float, default=1.0, help="Playback gain multiplier")
+    parser.add_argument(
+        "--wait-timeout",
+        type=int,
+        default=60,
+        help="Seconds to wait for edge server readiness before exit (0 = wait forever)",
+    )
     parser.add_argument("--list-devices", action="store_true", help="List audio devices and exit")
     args = parser.parse_args()
 
@@ -228,7 +271,13 @@ def main():
     ok, msg = check_server(args.server)
     if not ok:
         print(f"WARNING: Server not ready — {msg}")
-        print("Will keep trying...")
+        print(f"Waiting up to {args.wait_timeout}s for server readiness...")
+        ok, msg = wait_for_server(args.server, timeout_secs=args.wait_timeout)
+        if not ok:
+            print(f"ERROR: Server still unreachable — {msg}")
+            print("Tip: use the exact LAN URL printed by edge_server.py on the laptop.")
+            return
+        print(f"Server ready: {msg}")
     else:
         print(f"Server ready: {msg}")
 
@@ -321,8 +370,24 @@ def main():
 
                     # Send to edge server
                     print("  Sending to server...", end="", flush=True)
+                    _paused.set()
+                    while not _audio_q.empty():
+                        try:
+                            _audio_q.get_nowait()
+                        except queue.Empty:
+                            break
+
                     t0 = time.time()
-                    result = send_to_server(args.server, wav_bytes, tgt_lang)
+                    try:
+                        result = send_to_server(args.server, wav_bytes, tgt_lang)
+                    finally:
+                        while not _audio_q.empty():
+                            try:
+                                _audio_q.get_nowait()
+                            except queue.Empty:
+                                break
+                        _paused.clear()
+
                     t_round = time.time() - t0
 
                     if result and (result.get("english_text") or result.get("translated_text")):
