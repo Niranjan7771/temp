@@ -51,14 +51,14 @@ SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 SARVAM_BASE_URL = "https://api.sarvam.ai"
 
 # Model settings (centralized for tuning)
-STT_MODEL = "saaras:v2.5"
+STT_MODEL = "saaras:v3"  # <--- Changed from saaras:v2.5 to saaras:v3
 TRANSLATE_MODEL = "mayura:v1"
 TRANSLATE_MODE = "formal"
 
 # Latency optimization
 # When True, use speech-to-text-translate with the target language
 # and skip the separate translate call.
-DIRECT_TRANSLATE = False
+DIRECT_TRANSLATE = False  # <--- Changed back to False so we can use local translation
 DIRECT_TRANSLATE_FALLBACK = True
 
 # ── Deepgram API (STT-only backend) ───────────────────────────────────────

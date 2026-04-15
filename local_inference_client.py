@@ -330,6 +330,7 @@ def _get_stt_model():
                 device=LOCAL_STT_DEVICE,
                 compute_type=LOCAL_STT_COMPUTE_TYPE,
                 local_files_only=use_local_only,
+                cpu_threads=8,  # <--- Added to optimize STT speed on Apple Silicon CPU
             )
     return _stt_model
 
@@ -427,7 +428,10 @@ def _get_nllb():
         if _nllb_translator is None:
             model_dir = _resolve_nllb_model_dir(download_if_missing=True)
             _nllb_translator = ctranslate2.Translator(
-                model_dir, device="cpu", compute_type="int8",
+                model_dir, 
+                device="cpu", 
+                compute_type="int8",
+                intra_threads=8,  # <--- Optimized for Mac CPU cores
             )
             sp_model_path = _find_sentencepiece_model(model_dir)
             if not sp_model_path:

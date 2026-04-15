@@ -100,10 +100,10 @@ def transcribe_and_translate(
     t0 = time.time()
     try:
         resp = _session.post(
-            f"{SARVAM_BASE_URL}/speech-to-text-translate",
+            f"{SARVAM_BASE_URL}/speech-to-text",
             headers=_AUTH,
             files={"file": (audio_filename, wav_bytes, audio_content_type)},
-            data={"model": STT_MODEL, "target_language_code": "en-IN"},
+            data={"model": STT_MODEL, "mode": "translate", "language_code": "unknown"},
             timeout=15,  # Reduced from 20 for faster timeout on slow connections
         )
         resp.raise_for_status()
@@ -122,25 +122,18 @@ def transcribe_and_translate(
 
     t1 = time.time()
     try:
-        resp = _session.post(
-            f"{SARVAM_BASE_URL}/translate",
-            headers={**_AUTH, "Content-Type": "application/json"},
-            json={
-                "input": english_text,
-                "source_language_code": "en-IN",
-                "target_language_code": tgt_lang,
-                "model": TRANSLATE_MODEL,
-                "mode": TRANSLATE_MODE,
-            },
-            timeout=12,  # Reduced from 15 for faster timeout
+        # User requested: Use Local Model for Translation instead of Sarvam Cloud
+        import local_inference_client
+        translated, _ = local_inference_client.translate_text(
+            english_text,
+            source_lang="en-IN",
+            target_lang=tgt_lang
         )
-        resp.raise_for_status()
-        translated = resp.json().get("translated_text", english_text).strip()
         t_tr = time.time() - t1
         return (translated, english_text, t_stt, t_tr)
     except Exception as e:
         t_tr = time.time() - t1
-        print(f"  [Translate error] {e}")
+        print(f"  [Local Translate error] {e}")
         return (english_text, english_text, t_stt, t_tr)
 
 
