@@ -25,13 +25,21 @@ try:
 except ImportError:
     miniaudio = None
 
-from config import PIPER_MODELS_DIR, PIPER_VOICES, EDGE_TTS_VOICES
+from config import PIPER_MODELS_DIR, PIPER_VOICES, EDGE_TTS_VOICES, MMS_TTS_VOICES
 
 # ── Detect available TTS backends ──────────────────────────────────────────
 _piper_available = False
 _espeak_available = shutil.which("espeak-ng") is not None or shutil.which("espeak") is not None
 _edge_tts_available = False
 _indicf5_available = False
+_mms_available = False
+
+try:
+    from transformers import VitsModel, AutoTokenizer
+    import torch
+    _mms_available = True
+except ImportError:
+    pass
 
 try:
     from piper import PiperVoice
@@ -85,6 +93,11 @@ def get_backend_name(lang_code: str) -> str:
         return "indicf5"
     if _piper_available and _get_piper_model_path(lang_code):
         return "piper"
+    if _mms_available and lang_code in MMS_TTS_VOICES:
+        return "mms"
+    # Prefer edge-tts for Tamil and Telugu if IndicF5/MMS/Piper not available
+    if lang_code in {"ta-IN", "te-IN"} and _edge_tts_available:
+        return "edge-tts"
     if _espeak_available:
         return "espeak-ng"
     if _edge_tts_available:
@@ -104,6 +117,10 @@ def synthesize(text: str, lang_code: str = "en-IN", backend: str = "auto") -> by
     # If a specific backend is requested, try it directly
     if backend == "indicf5" and _indicf5_available:
         result = _indicf5_synthesize(text, lang_code)
+        if result:
+            return result
+    elif backend == "mms" and _mms_available:
+        result = _mms_synthesize(text, lang_code)
         if result:
             return result
     elif backend == "espeak" and _espeak_available:
@@ -141,6 +158,12 @@ def synthesize(text: str, lang_code: str = "en-IN", backend: str = "auto") -> by
             result = _piper_synthesize(text, model_path)
             if result:
                 return result
+
+    # 3. Try MMS (local, offline, fast - e.g. Tamil)
+    if _mms_available and lang_code in MMS_TTS_VOICES:
+        result = _mms_synthesize(text, lang_code)
+        if result:
+            return result
 
     # 3. Try espeak-ng (local, ultra-fast, robotic)
     if _espeak_available:
@@ -422,8 +445,8 @@ def _edge_tts_synthesize(text: str, lang_code: str) -> bytes:
         if not mp3_bytes:
             return b""
 
-        # Decode MP3 -> raw PCM using miniaudio, then wrap as WAV
-        decoded = miniaudio.decode(mp3_bytes, output_format=miniaudio.SampleFormat.SIGNED16)
+        # Decode MP3 -> raw PCM using miniaudio, then wrap as WAV (force 24kHz Mono for Pi playback compatibility)
+        decoded = miniaudio.decode(mp3_bytes, output_format=miniaudio.SampleFormat.SIGNED16, nchannels=1, sample_rate=24000)
         wav_io = io.BytesIO()
         with wave.open(wav_io, "wb") as wf:
             wf.setnchannels(decoded.nchannels)
@@ -446,3 +469,51 @@ def print_status():
     for lang_code in ["en-IN", "hi-IN", "ta-IN", "te-IN"]:
         backend = get_backend_name(lang_code)
         print(f"  {lang_code}: will use {backend}")
+
+# ── Meta MMS TTS (Multilingual Speech) ──────────────────────────────────────
+
+_mms_models = {}
+_mms_tokenizers = {}
+
+def _get_mms_model(lang_code: str):
+    """Lazily load MMS VitsModel and AutoTokenizer."""
+    if not _mms_available or lang_code not in MMS_TTS_VOICES:
+        return None, None
+
+    model_id = MMS_TTS_VOICES[lang_code]
+    if model_id not in _mms_models:
+        try:
+            print(f"  [MMS] Loading model {model_id}...")
+            _mms_models[model_id] = VitsModel.from_pretrained(model_id)
+            _mms_tokenizers[model_id] = AutoTokenizer.from_pretrained(model_id)
+        except Exception as e:
+            print(f"  [MMS load error] {e}")
+            return None, None
+
+    return _mms_models[model_id], _mms_tokenizers[model_id]
+
+def _mms_synthesize(text: str, lang_code: str) -> bytes:
+    """Synthesize text using Meta MMS VITS. Returns WAV bytes."""
+    model, tokenizer = _get_mms_model(lang_code)
+    if model is None or tokenizer is None:
+        return b""
+
+    try:
+        inputs = tokenizer(text, return_tensors="pt")
+        with torch.no_grad():
+            output = model(**inputs).waveform
+
+        # output is a float32 tensor
+        audio_np = output.cpu().numpy().squeeze()
+        
+        # Determine model sample rate
+        sr = model.config.sampling_rate
+
+        wav_io = io.BytesIO()
+        import soundfile as sf
+        sf.write(wav_io, audio_np, sr, format="WAV", subtype="PCM_16")
+        
+        return wav_io.getvalue()
+    except Exception as e:
+        print(f"  [MMS TTS error] {e}")
+        return b""

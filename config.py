@@ -113,9 +113,9 @@ PIPER_VOICES = {
     "en-IN": "en_US-lessac-medium",
     "hi-IN": "hi_IN-pratham-medium",
     "ml-IN": "ml_IN-arjun-medium",
-    # Tamil, Telugu, Kannada etc. use IndicF5 or espeak-ng fallback
+    "te-IN": "te_IN-maya-medium",
+    # Tamil, Kannada etc. use IndicF5 or espeak-ng/edge-tts fallback
     "ta-IN": None,
-    "te-IN": None,
     "kn-IN": None,
     "bn-IN": None,
     "mr-IN": None,
@@ -139,6 +139,11 @@ INDICF5_LANG_MAP = {
     "mr-IN": "mar",
     "gu-IN": "guj",
     "pa-IN": "pan",
+}
+
+# ── Meta MMS TTS (Multilingual Offline Fallback) ───────────────────────────
+MMS_TTS_VOICES = {
+    "ta-IN": "facebook/mms-tts-tam",
 }
 
 # ── Fallback TTS ───────────────────────────────────────────────────────────
