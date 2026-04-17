@@ -132,21 +132,7 @@ async def handle_pi_connection(websocket):
                                     trans_ms = int((time.time() - t0_trans) * 1000)
                                     print(f"💻  [Local Translate] => {hi_text} ({trans_ms}ms)")
                                 
-                                # 3. Generate English TTS (fast, ~50ms with preloaded Piper)
-                                en_tts_wav = b""
-                                en_tts_ms = 0
-                                if target_lang != "en-IN":
-                                    print(f"🎵  [English TTS] => Generating English audio...")
-                                    t0_en = time.time()
-                                    try:
-                                        en_tts_wav = synthesize(text_str, lang_code="en-IN", backend="auto")
-                                    except Exception as e:
-                                        print(f"⚠️  [English TTS Error] => {e}")
-                                    en_tts_ms = int((time.time() - t0_en) * 1000)
-                                    if en_tts_wav:
-                                        print(f"🎵  [English TTS] => Generated {len(en_tts_wav)} bytes ({en_tts_ms}ms)")
-
-                                # 4. Generate Target Language TTS
+                                # 3. Generate Target Language TTS
                                 print(f"🎵  [Local TTS] => Generating Audio for {target_lang}...")
                                 t0_tts = time.time()
                                 tts_wav = b""
@@ -159,8 +145,8 @@ async def handle_pi_connection(websocket):
                                 if tts_wav:
                                     print(f"🎵  [Local TTS] => Generated {len(tts_wav)} bytes ({tts_ms}ms)")
                                 
-                                total_server_ms = stt_ms + trans_ms + en_tts_ms + tts_ms
-                                print(f"⏱️  [LATENCY PIPELINE] STT: {stt_ms}ms | Trans: {trans_ms}ms | EN-TTS: {en_tts_ms}ms | TTS: {tts_ms}ms | Total: {total_server_ms}ms")
+                                total_server_ms = stt_ms + trans_ms + tts_ms
+                                print(f"⏱️  [LATENCY PIPELINE] STT: {stt_ms}ms | Trans: {trans_ms}ms | TTS: {tts_ms}ms | Total: {total_server_ms}ms")
                                 print(f"========================================\n")
                                 
                                 # Send JSON data & timings back to Pi
@@ -168,19 +154,13 @@ async def handle_pi_connection(websocket):
                                     "transcript": text_str,
                                     "translation": hi_text,
                                     "is_final": True,
-                                    "has_english_audio": bool(en_tts_wav),
                                     "timings": {
                                         "stt_ms": stt_ms,
                                         "trans_ms": trans_ms,
-                                        "en_tts_ms": en_tts_ms,
                                         "tts_ms": tts_ms,
                                         "total_ms": total_server_ms
                                     }
                                 }))
-                                
-                                # Send English audio first (if target is non-English)
-                                if en_tts_wav:
-                                    await websocket.send(en_tts_wav)
                                 
                                 # Send target language audio to Pi
                                 if tts_wav:
