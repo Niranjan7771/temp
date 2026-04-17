@@ -19,6 +19,7 @@ _HF_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
 # Model download paths (voice_name → relative path on HuggingFace)
 _MODEL_PATHS = {
+    "en_US-lessac-low": "en/en_US/lessac/low/en_US-lessac-low.onnx",
     "en_US-lessac-medium": "en/en_US/lessac/medium/en_US-lessac-medium.onnx",
     "hi_IN-pratham-medium": "hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx",
     "te_IN-maya-medium": "te/te_IN/maya/medium/te_IN-maya-medium.onnx",

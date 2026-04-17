@@ -109,8 +109,11 @@ PIPER_MODELS_DIR = Path(__file__).resolve().parent / "piper_models"
 
 # Piper voice model filenames (without .onnx extension) per language code
 # These are downloaded by download_models.py
+# Fast English model (16kHz, ~50ms) for low-latency output
+PIPER_VOICE_ENGLISH_FAST = "en_US-lessac-low"
+
 PIPER_VOICES = {
-    "en-IN": "en_US-lessac-medium",
+    "en-IN": "en_US-lessac-low",
     "hi-IN": "hi_IN-pratham-medium",
     "ml-IN": "ml_IN-arjun-medium",
     "te-IN": "te_IN-maya-medium",

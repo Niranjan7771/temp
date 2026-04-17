@@ -400,14 +400,23 @@ def main():
                         print(f"  TR: {tr}")
                         print(f"  Timings: STT={timings.get('stt_ms',0)}ms "
                               f"Translate={timings.get('translate_ms',0)}ms "
+                              f"EN-TTS={timings.get('english_tts_ms',0)}ms "
                               f"TTS={timings.get('tts_ms',0)}ms "
                               f"Total={timings.get('total_ms',0)}ms")
 
-                        # Play TTS audio
+                        # Play English TTS audio first (if available)
+                        en_tts_b64 = result.get("english_tts_audio", "")
+                        if en_tts_b64:
+                            en_tts_wav = base64.b64decode(en_tts_b64)
+                            print("  🔊 Playing English...", end="", flush=True)
+                            play_wav(en_tts_wav)
+                            print(" Done.")
+
+                        # Play target language TTS audio
                         tts_b64 = result.get("tts_audio", "")
                         if tts_b64:
                             tts_wav = base64.b64decode(tts_b64)
-                            print("  🔊 Playing...", end="", flush=True)
+                            print("  🔊 Playing translation...", end="", flush=True)
                             play_wav(tts_wav)
                             print(" Done.")
                     else:

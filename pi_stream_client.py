@@ -243,10 +243,15 @@ async def capture_and_send(websocket):
             await websocket.send(out_pcm.tobytes())
 
 async def receive_translations(websocket, gain=1.0):
+    _expecting_english_audio = False
     try:
         async for message in websocket:
             if type(message) is bytes:
-                print(f"📥 [Received Audio] Got {len(message)} bytes from server.")
+                if _expecting_english_audio:
+                    print(f"📥 [English Audio] Got {len(message)} bytes from server.")
+                    _expecting_english_audio = False
+                else:
+                    print(f"📥 [Translation Audio] Got {len(message)} bytes from server.")
                 playback_queue.put((message, gain))
                 # Also save the last received audio to disk for debugging
                 try:
@@ -258,14 +263,18 @@ async def receive_translations(websocket, gain=1.0):
                 
             try:
                 data = json.loads(message)
+                if 'transcript' in data:
+                    print(f"  [Heard] {data['transcript']}")
                 if 'translation' in data:
                     print(f"  [Translated] {data['translation']}")
-                elif 'transcript' in data:
-                    print(f"  [Heard] {data['transcript']}")
+                
+                # Check if English audio will follow
+                _expecting_english_audio = data.get('has_english_audio', False)
                 
                 if 'timings' in data:
                     t = data['timings']
-                    print(f"  ⏱️  [LATENCY] STT: {t.get('stt_ms')}ms | Trans: {t.get('trans_ms')}ms | TTS: {t.get('tts_ms')}ms | Total Stream: {t.get('total_ms')}ms")
+                    en_tts = f" | EN-TTS: {t.get('en_tts_ms', 0)}ms" if t.get('en_tts_ms') else ""
+                    print(f"  ⏱️  [LATENCY] STT: {t.get('stt_ms')}ms | Trans: {t.get('trans_ms')}ms{en_tts} | TTS: {t.get('tts_ms')}ms | Total Stream: {t.get('total_ms')}ms")
             except Exception as e:
                 # Binary audio (TTS) could be received here pass
                 pass

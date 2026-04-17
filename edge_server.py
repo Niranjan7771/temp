@@ -43,7 +43,7 @@ from inference_client import (
     transcribe_and_translate,
     translate_text,
 )
-from tts_engine import synthesize, get_backend_name
+from tts_engine import synthesize, get_backend_name, preload_piper
 
 
 app = Flask(__name__)
@@ -114,7 +114,19 @@ def process_audio():
             },
         })
 
-    # Step 3: TTS on translated text
+    # Step 3: English TTS (fast, ~50ms with preloaded Piper)
+    en_tts_b64 = ""
+    t_en_tts = 0.0
+    if tgt_lang != "en-IN" and english_text:
+        t_en_start = time.time()
+        try:
+            en_tts_wav = synthesize(english_text, lang_code="en-IN", backend="auto")
+            en_tts_b64 = base64.b64encode(en_tts_wav).decode("ascii") if en_tts_wav else ""
+        except Exception as e:
+            print(f"  [English TTS error] {e}")
+        t_en_tts = time.time() - t_en_start
+
+    # Step 4: Target language TTS
     tts_text = translated_text or english_text
     t_tts_start = time.time()
     try:
@@ -133,10 +145,12 @@ def process_audio():
         "english_text": english_text or "",
         "translated_text": translated_text or "",
         "tts_audio": tts_b64,
+        "english_tts_audio": en_tts_b64,
         "tts_backend": get_backend_name(tgt_lang),
         "timings": {
             "stt_ms": int(t_stt * 1000),
             "translate_ms": int(t_translate * 1000),
+            "english_tts_ms": int(t_en_tts * 1000),
             "tts_ms": int(t_tts * 1000),
             "total_ms": int(t_total * 1000),
         },
@@ -217,6 +231,11 @@ def main():
         print(f"WARNING: Backend not ready — {msg}")
 
     lan_ip = _get_primary_ip()
+
+    # Pre-load English Piper model + target language model for fast first TTS
+    preload_piper("en-IN")
+    preload_piper(_default_tgt_lang)
+
     print("=" * 60)
     print("  EDGE SERVER — Wearable Voice Translator")
     print("=" * 60)

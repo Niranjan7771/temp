@@ -16,7 +16,7 @@ from sarvamai import AsyncSarvamAI
 # Connect to local components
 import local_inference_client
 
-from tts_engine import synthesize
+from tts_engine import synthesize, preload_piper
 
 # Environment configuration
 from dotenv import load_dotenv
@@ -118,15 +118,35 @@ async def handle_pi_connection(websocket):
                                 print(f"🌩  [Sarvam STT] => {text_str} ({stt_ms}ms)")
                                 
                                 # 2. Measure Local Translation Latency
-                                print(f"💻  [Local Translate] => Engine triggering... (to {target_lang})")
-                                t0_trans = time.time()
-                                hi_text, _ = local_inference_client.translate_text(
-                                    text_str, source_lang="auto", target_lang=target_lang
-                                )
-                                trans_ms = int((time.time() - t0_trans) * 1000)
-                                print(f"💻  [Local Translate] => {hi_text} ({trans_ms}ms)")
+                                if target_lang == "en-IN":
+                                    # No translation needed — English in, English out
+                                    hi_text = text_str
+                                    trans_ms = 0
+                                    print(f"💻  [No Translation] => Target is English, skipping")
+                                else:
+                                    print(f"💻  [Local Translate] => Engine triggering... (to {target_lang})")
+                                    t0_trans = time.time()
+                                    hi_text, _ = local_inference_client.translate_text(
+                                        text_str, source_lang="auto", target_lang=target_lang
+                                    )
+                                    trans_ms = int((time.time() - t0_trans) * 1000)
+                                    print(f"💻  [Local Translate] => {hi_text} ({trans_ms}ms)")
                                 
-                                # 3. Measure Local TTS Latency
+                                # 3. Generate English TTS (fast, ~50ms with preloaded Piper)
+                                en_tts_wav = b""
+                                en_tts_ms = 0
+                                if target_lang != "en-IN":
+                                    print(f"🎵  [English TTS] => Generating English audio...")
+                                    t0_en = time.time()
+                                    try:
+                                        en_tts_wav = synthesize(text_str, lang_code="en-IN", backend="auto")
+                                    except Exception as e:
+                                        print(f"⚠️  [English TTS Error] => {e}")
+                                    en_tts_ms = int((time.time() - t0_en) * 1000)
+                                    if en_tts_wav:
+                                        print(f"🎵  [English TTS] => Generated {len(en_tts_wav)} bytes ({en_tts_ms}ms)")
+
+                                # 4. Generate Target Language TTS
                                 print(f"🎵  [Local TTS] => Generating Audio for {target_lang}...")
                                 t0_tts = time.time()
                                 tts_wav = b""
@@ -139,8 +159,8 @@ async def handle_pi_connection(websocket):
                                 if tts_wav:
                                     print(f"🎵  [Local TTS] => Generated {len(tts_wav)} bytes ({tts_ms}ms)")
                                 
-                                total_server_ms = stt_ms + trans_ms + tts_ms
-                                print(f"⏱️  [LATENCY PIPELINE] STT: {stt_ms}ms | Trans: {trans_ms}ms | TTS: {tts_ms}ms | Total: {total_server_ms}ms")
+                                total_server_ms = stt_ms + trans_ms + en_tts_ms + tts_ms
+                                print(f"⏱️  [LATENCY PIPELINE] STT: {stt_ms}ms | Trans: {trans_ms}ms | EN-TTS: {en_tts_ms}ms | TTS: {tts_ms}ms | Total: {total_server_ms}ms")
                                 print(f"========================================\n")
                                 
                                 # Send JSON data & timings back to Pi
@@ -148,15 +168,21 @@ async def handle_pi_connection(websocket):
                                     "transcript": text_str,
                                     "translation": hi_text,
                                     "is_final": True,
+                                    "has_english_audio": bool(en_tts_wav),
                                     "timings": {
                                         "stt_ms": stt_ms,
                                         "trans_ms": trans_ms,
+                                        "en_tts_ms": en_tts_ms,
                                         "tts_ms": tts_ms,
                                         "total_ms": total_server_ms
                                     }
                                 }))
                                 
-                                # Send Audio bytes to Pi
+                                # Send English audio first (if target is non-English)
+                                if en_tts_wav:
+                                    await websocket.send(en_tts_wav)
+                                
+                                # Send target language audio to Pi
                                 if tts_wav:
                                     await websocket.send(tts_wav)
                                     
@@ -188,6 +214,11 @@ def get_lan_ip():
 
 async def main():
     lan_ip = get_lan_ip()
+    
+    # Pre-load English Piper model so first TTS call is fast (~50ms vs ~520ms cold)
+    print("⏳ Pre-loading English TTS model...")
+    preload_piper("en-IN")
+    print("✅ English TTS ready.")
     
     print("====================================")
     print("  EDGE STREAM SERVER (WebSockets)")

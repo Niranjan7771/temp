@@ -3,11 +3,11 @@ TTS Engine — priority chain for local speech synthesis.
 
 Priority order:
   1. IndicF5   (Indian languages, near-human quality, 11 Indic langs)
-  2. Piper TTS  (local ONNX, ~200-400ms, natural sounding, offline)
+  2. Piper TTS  (local ONNX, ~50ms after preload, natural sounding, offline)
   3. espeak-ng  (local, ~50ms, robotic but ultra-fast, offline)
   4. edge-tts   (cloud fallback, ~300-500ms, requires internet)
 
-For English: Piper is primary.
+For English: Piper low-latency (en_US-lessac-low, 16kHz, ~50ms).
 For Indic languages: IndicF5 is primary when available.
 """
 

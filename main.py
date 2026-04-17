@@ -295,9 +295,19 @@ def play_stream(audio_generator):
 _tts_backend: str = "auto"
 
 
-def _speak_background(text: str, tgt_code: str, t0: float, t_stt: float, t_translate: float, tts_backend: str = "auto"):
+def _speak_background(text: str, tgt_code: str, t0: float, t_stt: float, t_translate: float, tts_backend: str = "auto", english_text: str = ""):
     """Run TTS + playback on a background thread so main loop resumes listening."""
     t1 = time.time()
+
+    # Speak English first if target is non-English and we have English text
+    t_en_play = 0.0
+    if english_text and tgt_code != "en-IN":
+        en_gen = synthesize_stream(english_text, "en-IN", backend=tts_backend)
+        t_en_start = time.time()
+        if en_gen:
+            play_stream(en_gen)
+        t_en_play = time.time() - t_en_start
+
     audio_generator = synthesize_stream(text, tgt_code, backend=tts_backend)
 
     t2 = time.time()
@@ -424,7 +434,7 @@ def process_utterance(wav_bytes: bytes, tgt_code: str, tgt_name: str, direct_tra
     print(f"  🔊 Speaking…", flush=True)
 
     # ── TTS + Playback (background thread) ─────────────────────────────
-    _tts_pool.submit(_speak_background, text, tgt_code, t0, t_stt, t_translate, _tts_backend)
+    _tts_pool.submit(_speak_background, text, tgt_code, t0, t_stt, t_translate, _tts_backend, english_text or "")
 
 
 def _calibrate_noise(input_device=None):
@@ -704,7 +714,8 @@ def main():
     print("=" * 56)
     print()
 
-    # Pre-load Piper model now so first utterance is fast
+    # Pre-load Piper model now so the first TTS call is fast
+    preload_piper("en-IN")  # Always preload English for low-latency output
     preload_piper(tgt_code)
 
     # ── Detect mic sample rate ─────────────────────────────────────────
